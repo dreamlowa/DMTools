@@ -1,0 +1,9 @@
+.venv-build/
+build/
+dist/
+TestData/
+output/
+tmp/
+*.spec
+__pycache__/
+*.pyc

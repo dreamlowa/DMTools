@@ -1,0 +1,2184 @@
+from __future__ import annotations
+
+import json
+import os
+import queue
+import sys
+import threading
+import calendar
+from pathlib import Path
+import tkinter as tk
+from tkinter import filedialog, messagebox, scrolledtext, ttk
+
+from converter import (
+    ConversionCancelled,
+    ConversionError,
+    MarkingCode,
+    apply_escape_mode,
+    decode_pdf,
+    full_code_str,
+    generate_codes_pdf,
+    generate_label_pdf,
+    gtin_check_digit_is_valid,
+    print_pdf_windows,
+    write_codes_csv,
+    write_codes_xlsx,
+)
+
+
+def find_pdf_files(source: Path) -> list[Path]:
+    if source.is_file():
+        return [source] if source.suffix.lower() == ".pdf" else []
+    if source.is_dir():
+        return sorted(
+            (
+                path
+                for path in source.rglob("*")
+                if path.is_file() and path.suffix.lower() == ".pdf"
+            ),
+            key=lambda path: str(path).casefold(),
+        )
+    return []
+
+
+def allocate_output_paths(pdf_files: list[Path]) -> list[tuple[Path, Path]]:
+    """Create unique names for this run; existing CSV files may be overwritten."""
+    used_paths: set[str] = set()
+    jobs: list[tuple[Path, Path]] = []
+
+    for pdf_path in pdf_files:
+        destination = pdf_path.parent
+        base_name = f"{pdf_path.stem}_decoded_codes"
+        candidate_name = f"{base_name}.csv"
+        suffix = 2
+
+        while str(destination / candidate_name).casefold() in used_paths:
+            candidate_name = f"{base_name}_{suffix}.csv"
+            suffix += 1
+
+        output_path = destination / candidate_name
+        used_paths.add(str(output_path).casefold())
+        jobs.append((pdf_path, output_path))
+
+    return jobs
+
+
+def default_combined_output_path(source: Path) -> Path:
+    if source.is_dir():
+        folder_name = source.name or source.drive.rstrip(":\\/") or "result"
+        return source / f"{folder_name}.csv"
+    return source.with_suffix(".csv")
+
+
+def config_path() -> Path:
+    if getattr(sys, "frozen", False):
+        base = Path(sys.executable).resolve().parent
+    else:
+        base = Path(__file__).resolve().parent
+    return base / "PDFDataMatrixToCSV_config.json"
+
+
+def _split_drop_paths(data: str) -> list[str]:
+    import re
+
+    result: list[str] = []
+    for m in re.finditer(r"\{([^}]*)\}|(\S+)", data):
+        grp = m.group(1) or m.group(2)
+        if grp:
+            result.append(grp)
+    return result
+
+
+class ConverterGui:
+    def __init__(self, root: tk.Tk) -> None:
+        self.root = root
+        self.root.title("GS1 DataMatrix: PDF в CSV")
+        self.root.geometry("1180x720")
+        self.root.minsize(960, 600)
+        self._set_window_icon()
+
+        self.source_var = tk.StringVar()
+        self.combined_output_var = tk.StringVar()
+        self.merge_csv_var = tk.BooleanVar(value=False)
+        self.escape_mode_var = tk.StringVar(value="gs")
+        self.dark_var = tk.BooleanVar(value=False)
+        self.status_var = tk.StringVar(value="Выберите PDF-файл или папку")
+
+        self.events: queue.Queue[tuple[str, object]] = queue.Queue()
+        self.cancel_event = threading.Event()
+        self.worker: threading.Thread | None = None
+        self.running = False
+        self.last_output_dir: str | None = None
+        self._last_codes: list[MarkingCode] = []
+        self._multi_source_files: list[Path] = []
+        self.outer: ttk.Frame | None = None
+        self.dm_csv_var = tk.StringVar()
+        self.dm_pdf_var = tk.StringVar()
+        self.dm_label_var = tk.BooleanVar(value=True)
+        self.dm_show_date_var = tk.BooleanVar(value=True)
+        self.dm_show_batch_var = tk.BooleanVar(value=True)
+        self.dm_show_code_var = tk.BooleanVar(value=True)
+        self.dm_show_short_var = tk.BooleanVar(value=False)
+        self.dm_status_var = tk.StringVar(value="Выберите CSV с кодами маркировки")
+        self.dm_label_size_var = tk.StringVar(value="25 × 25")
+        self.dm_group_var = tk.StringVar(value="— без группы —")
+        self.dm_date_var = tk.StringVar()
+        self.dm_batch_var = tk.StringVar()
+        self.dm_name_var = tk.StringVar()
+
+        self._load_config()
+        self._build_ui()
+        self._apply_theme()
+        self._setup_dnd()
+        self._update_output_controls()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.after(100, self._drain_events)
+        self.root.after(200, self._enable_copy_menus)
+
+    def _set_window_icon(self) -> None:
+        base_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+        icon_path = base_dir / "centrdelfin.ico"
+        if icon_path.is_file():
+            try:
+                self.root.iconbitmap(str(icon_path))
+            except tk.TclError:
+                pass
+
+    def _enable_copy_menus(self) -> None:
+        """Добавляет контекстное меню «Копировать»/«Выбрать всё» и Ctrl+C
+        для всех полей ввода (Entry) в окне."""
+        def add_menu(entry: tk.Entry) -> None:
+            menu = tk.Menu(entry, tearoff=0)
+
+            def do_copy():
+                try:
+                    entry.event_generate("<<Copy>>")
+                except Exception:
+                    try:
+                        sel = entry.selection_get()
+                        entry.clipboard_clear()
+                        entry.clipboard_append(sel)
+                    except Exception:
+                        pass
+
+            def do_select_all():
+                entry.select_range(0, "end")
+                entry.icursor("end")
+
+            menu.add_command(label="Копировать", command=do_copy)
+            menu.add_command(label="Выбрать всё", command=do_select_all)
+            entry.bind("<Button-3>", lambda e, m=menu: m.tk_popup(e.x_root, e.y_root))
+            entry.bind("<Control-c>", lambda e: do_copy())
+
+        def walk(widget):
+            for child in widget.winfo_children():
+                if isinstance(child, ttk.Entry):
+                    add_menu(child)
+                walk(child)
+
+        try:
+            walk(self.root)
+        except Exception:
+            pass
+
+    def _setup_dnd(self) -> None:
+        try:
+            self.root.drop_target_register("DND_Files")
+            self.root.dnd_bind("<<Drop>>", self._on_drop)
+            self.source_entry.drop_target_register("DND_Files")
+            self.source_entry.dnd_bind("<<Drop>>", self._on_drop)
+            if hasattr(self, "drop_zone"):
+                self.drop_zone.drop_target_register("DND_Files")
+                self.drop_zone.dnd_bind("<<Drop>>", self._on_drop)
+                self.drop_zone.dnd_bind("<<DragEnter>>", self._on_drag_enter)
+                self.drop_zone.dnd_bind("<<DragLeave>>", self._on_drag_leave)
+            self.drop_enabled = True
+        except Exception:
+            self.drop_enabled = False
+
+    def _on_drag_enter(self, _event: object) -> None:
+        if not self.drop_enabled:
+            return
+        try:
+            self.drop_zone.configure(fg="#2CA847", bg="#eef8ef", relief="solid", bd=2)
+        except Exception:
+            pass
+
+    def _on_drag_leave(self, _event: object) -> None:
+        if not self.drop_enabled:
+            return
+        try:
+            self.drop_zone.configure(fg="#888888", bg="#fafaf9", relief="solid", bd=1)
+        except Exception:
+            pass
+
+    def _on_drop(self, event: object) -> None:
+        if not self.drop_enabled:
+            return
+        try:
+            self.drop_zone.configure(fg="#888888", bg="#fafaf9", relief="solid", bd=1)
+        except Exception:
+            pass
+        raw = getattr(event, "data", None)
+        if not raw:
+            return
+        dropped = [Path(p) for p in _split_drop_paths(str(raw))]
+        pdfs = [p for p in dropped if p.suffix.lower() == ".pdf"]
+        if not pdfs:
+            return
+        self._multi_source_files = pdfs
+        if len(pdfs) == 1:
+            self.source_var.set(str(pdfs[0]))
+            self.combined_output_var.set(str(default_combined_output_path(pdfs[0])))
+        else:
+            self.source_var.set(
+                f"{len(pdfs)} файлов: "
+                + "; ".join(str(p) for p in pdfs[:3])
+                + (" ..." if len(pdfs) > 3 else "")
+            )
+            self.combined_output_var.set(
+                str(default_combined_output_path(pdfs[0].parent))
+            )
+        self._update_output_controls()
+
+    def _apply_theme(self) -> None:
+        dark = self.dark_var.get()
+        style = ttk.Style(self.root)
+
+        if dark:
+            bg = "#1f1f1f"
+            fg = "#e8e8e8"
+            field = "#2b2b2b"
+            sel = "#333333"
+            border = "#3a3a3a"
+            try:
+                style.theme_use("clam")
+            except tk.TclError:
+                pass
+            style.configure(".", background=bg, foreground=fg)
+            style.configure("TFrame", background=bg)
+            style.configure("TLabelframe", background=bg, foreground=fg)
+            style.configure("TLabelframe.Label", background=bg, foreground=fg)
+            style.configure("TLabel", background=bg, foreground=fg)
+            style.configure(
+                "TCheckbutton", background=bg, foreground=fg,
+                focuscolor=bg, indicatorrelief="flat", indicatormargin=4,
+            )
+            style.map(
+                "TCheckbutton",
+                background=[("active", bg), ("pressed", bg)],
+                indicatorcolor=[("selected", "#2CA847"), ("active", field), ("!selected", field)],
+            )
+            style.configure(
+                "TRadiobutton", background=bg, foreground=fg,
+                focuscolor=bg, indicatorrelief="flat", indicatormargin=4,
+            )
+            style.map(
+                "TRadiobutton",
+                background=[("active", bg), ("pressed", bg)],
+                indicatorcolor=[("selected", "#2CA847"), ("active", field), ("!selected", field)],
+            )
+            style.configure(
+                "TButton", background=sel, foreground=fg, bordercolor=border,
+                focuscolor=bg, lightcolor=bg, darkcolor=bg, relief="flat",
+                padding=(8, 3),
+            )
+            style.map("TButton", background=[("active", "#444444"), ("pressed", "#2a2a2a")])
+            style.configure(
+                "TEntry", fieldbackground=field, foreground=fg,
+                bordercolor=border, insertcolor=fg, padding=(4, 3),
+            )
+            style.map("TEntry", fieldbackground=[("focus", field)], bordercolor=[("focus", "#2CA847")])
+            style.configure("TProgressbar", background="#2CA847", troughcolor=field)
+            style.configure("Vertical.TScrollbar", background=sel, troughcolor=bg, arrowcolor=fg, bordercolor=bg)
+            style.configure("Horizontal.TScrollbar", background=sel, troughcolor=bg, arrowcolor=fg, bordercolor=bg)
+            # вкладки Notebook — читаемые в тёмной теме
+            style.configure(
+                "TNotebook", background=bg, borderwidth=0, tabmargins=(2, 2, 2, 0),
+            )
+            style.configure(
+                "TNotebook.Tab",
+                background="#2a2a2a", foreground="#cfcfcf", padding=(14, 4),
+                borderwidth=0, focuscolor=bg, bordercolor=border,
+            )
+            style.map(
+                "TNotebook.Tab",
+                background=[("selected", "#3a3a3a"), ("active", "#333333")],
+                foreground=[("selected", "#ffffff"), ("active", "#ffffff")],
+                padding=[("selected", (16, 6)), ("active", (14, 4))],
+            )
+        else:
+            bg = "#f0f0f0"
+            fg = "#000000"
+            field = "#ffffff"
+            try:
+                style.theme_use("vista")
+            except tk.TclError:
+                pass
+            style.configure("TFrame", background=bg)
+            style.configure("Labelframe", background=bg, foreground=fg)
+            style.configure("Labelframe.Label", background=bg, foreground=fg)
+            style.configure("TLabel", background=bg, foreground=fg)
+            style.configure("TCheckbutton", background=bg, foreground=fg)
+            style.configure("TEntry", fieldbackground=field, foreground=fg, insertcolor=fg)
+            style.configure("TProgressbar", background="#2CA847", troughcolor=field)
+            # вкладки — активная крупнее остальных
+            style.configure(
+                "TNotebook.Tab",
+                background="#e4e4e4", foreground="#333333", padding=(14, 4),
+                borderwidth=1, focuscolor=bg, bordercolor="#c0c0c0",
+            )
+            style.map(
+                "TNotebook.Tab",
+                background=[("selected", "#ffffff"), ("active", "#eeeeee")],
+                foreground=[("selected", "#000000"), ("active", "#000000")],
+                padding=[("selected", (16, 6)), ("active", (14, 4))],
+                bordercolor=[("selected", "#2CA847")],
+            )
+
+        self.root.configure(bg=bg)
+        if self.outer is not None:
+            self.outer.configure(style="TFrame")
+        self.log.configure(bg=field, fg=fg, insertbackground=fg)
+        if hasattr(self, "dm_log"):
+            try:
+                self.dm_log.configure(bg=field, fg=fg, insertbackground=fg)
+            except Exception:
+                pass
+        if hasattr(self, "dm_preview_canvas"):
+            try:
+                self.dm_preview_canvas.configure(bg=field)
+            except Exception:
+                pass
+        if hasattr(self, "dm_full_preview_canvas"):
+            try:
+                self.dm_full_preview_canvas.configure(bg=field)
+            except Exception:
+                pass
+        if hasattr(self, "drop_zone"):
+            try:
+                self.drop_zone.configure(bg=field, fg=fg)
+            except Exception:
+                pass
+
+        for widget in self.root.winfo_children():
+            self._refresh_style(widget)
+
+    def _refresh_style(self, widget: tk.Misc) -> None:
+        try:
+            if isinstance(widget, ttk.Label):
+                widget.configure(style="TLabel")
+            elif isinstance(widget, ttk.Entry):
+                widget.configure(style="TEntry")
+            elif isinstance(widget, ttk.Checkbutton):
+                widget.configure(style="TCheckbutton")
+            elif isinstance(widget, ttk.Radiobutton):
+                widget.configure(style="TRadiobutton")
+            elif isinstance(widget, ttk.Button):
+                widget.configure(style="TButton")
+            elif isinstance(widget, ttk.Frame):
+                widget.configure(style="TFrame")
+        except tk.TclError:
+            pass
+        for child in widget.winfo_children():
+            self._refresh_style(child)
+
+    def _build_ui(self) -> None:
+        root_container = ttk.Frame(self.root, padding=8)
+        root_container.grid(row=0, column=0, sticky="nsew")
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
+
+        # Общая верхняя панель: заголовок + тёмная тема (для всего окна)
+        topbar = ttk.Frame(root_container)
+        topbar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        topbar.columnconfigure(1, weight=1)
+        ttk.Label(topbar, text="delfin PDF_DM_CSV", font=("Segoe UI", 12, "bold")).grid(
+            row=0, column=0, sticky="w", padx=(2, 10)
+        )
+        self.dark_check = ttk.Checkbutton(
+            topbar, text="Тёмная тема",
+            variable=self.dark_var, command=self._apply_theme,
+        )
+        self.dark_check.grid(row=0, column=1, sticky="e", padx=(10, 2))
+
+        self.notebook = ttk.Notebook(root_container)
+        self.notebook.grid(row=1, column=0, sticky="nsew")
+        root_container.rowconfigure(1, weight=1)
+
+        # --- Вкладка 1: PDF -> CSV ---
+        tab1 = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(tab1, text="PDF → CSV")
+
+        outer = ttk.Frame(tab1)
+        self.outer = outer
+        outer.grid(row=0, column=0, sticky="nsew")
+        outer.columnconfigure(1, weight=1)
+        outer.rowconfigure(10, weight=1)
+
+        # Drop zone banner
+        drop_outer = ttk.Frame(outer, style="TFrame")
+        drop_outer.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 12))
+        self.drop_zone = tk.Label(
+            drop_outer,
+            text="⬇  Перетащите PDF-файлы сюда  ⬇\nили нажмите «Выбрать PDF» ниже",
+            font=("Segoe UI", 13, "bold"),
+            justify="center",
+            fg="#888888",
+            bg="#fafaf9",
+            relief="solid",
+            bd=1,
+            height=3,
+            padx=20,
+            pady=14,
+            cursor="hand2",
+        )
+        self.drop_zone.pack(fill="x")
+
+        ttk.Label(outer, text="Источник:").grid(
+            row=1, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+        )
+        self.source_entry = ttk.Entry(outer, textvariable=self.source_var)
+        self.source_entry.grid(row=1, column=1, sticky="ew", pady=(0, 8))
+
+        source_buttons = ttk.Frame(outer)
+        source_buttons.grid(row=1, column=2, padx=(8, 0), pady=(0, 8))
+        self.select_file_button = ttk.Button(
+            source_buttons, text="Выбрать PDF", command=self._select_pdf
+        )
+        self.select_file_button.grid(row=0, column=0, padx=(0, 6))
+        self.select_folder_button = ttk.Button(
+            source_buttons, text="Выбрать папку", command=self._select_source_folder
+        )
+        self.select_folder_button.grid(row=0, column=1)
+
+        self.merge_csv_check = ttk.Checkbutton(
+            outer,
+            text="Объединять в один CSV файл",
+            variable=self.merge_csv_var,
+            command=self._update_output_controls,
+        )
+        self.merge_csv_check.grid(
+            row=2, column=1, columnspan=2, sticky="w", pady=(0, 8)
+        )
+
+        ttk.Label(outer, text="Общий CSV:").grid(
+            row=3, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+        )
+        self.output_entry = ttk.Entry(outer, textvariable=self.combined_output_var)
+        self.output_entry.grid(row=3, column=1, sticky="ew", pady=(0, 8))
+        self.select_output_button = ttk.Button(
+            outer, text="Выбрать файл", command=self._select_output_file
+        )
+        self.select_output_button.grid(
+            row=3, column=2, sticky="ew", padx=(8, 0), pady=(0, 8)
+        )
+
+        escape_group = ttk.LabelFrame(outer, text="Разделитель GS в CSV")
+        escape_group.grid(row=4, column=1, columnspan=2, sticky="w", pady=(0, 8))
+        self.escape_gs_radio = ttk.Radiobutton(
+            escape_group, text="Символ GS (обычный)", value="gs",
+            variable=self.escape_mode_var,
+        )
+        self.escape_gs_radio.grid(row=0, column=0, sticky="w", padx=8, pady=2)
+        self.escape_1c_radio = ttk.Radiobutton(
+            escape_group, text="Для 1С (GS заменён на \\x1d)", value="1c",
+            variable=self.escape_mode_var,
+        )
+        self.escape_1c_radio.grid(row=1, column=0, sticky="w", padx=8, pady=2)
+        self.escape_ozon_radio = ttk.Radiobutton(
+            escape_group, text="Для OZON (GS заменён на \\u001d)", value="ozon",
+            variable=self.escape_mode_var,
+        )
+        self.escape_ozon_radio.grid(row=2, column=0, sticky="w", padx=8, pady=2)
+
+        ttk.Label(
+            outer,
+            text=(
+                "Для папки PDF-файлы ищутся рекурсивно. "
+                "По умолчанию CSV сохраняются рядом с исходными PDF."
+            ),
+        ).grid(row=7, column=0, columnspan=3, sticky="w", pady=(0, 10))
+
+        actions = ttk.Frame(outer)
+        actions.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        actions.columnconfigure(2, weight=1)
+        self.start_button = ttk.Button(
+            actions, text="Начать конвертацию", command=self._start
+        )
+        self.start_button.grid(row=0, column=0, padx=(0, 8))
+        self.stop_button = ttk.Button(
+            actions, text="Остановить", command=self._stop, state="disabled"
+        )
+        self.stop_button.grid(row=0, column=1)
+        self.open_folder_button = ttk.Button(
+            actions, text="Перейти в папку", command=self._open_output_folder
+        )
+        self.open_folder_button.grid(row=0, column=2, sticky="w", padx=(12, 0))
+        self.open_codes_button = ttk.Button(
+            actions, text="Открыть код", command=self._open_codes_dialog
+        )
+        self.open_codes_button.grid(row=0, column=3, sticky="w", padx=(12, 0))
+        self.excel_button = ttk.Button(
+            actions, text="Выгрузить Excel", command=self._export_excel
+        )
+        self.excel_button.grid(row=0, column=4, sticky="w", padx=(12, 0))
+        ttk.Label(actions, textvariable=self.status_var).grid(
+            row=0, column=5, sticky="e", padx=(12, 0)
+        )
+
+        self.progress = ttk.Progressbar(outer, mode="determinate")
+        self.progress.grid(row=9, column=0, columnspan=3, sticky="ew", pady=(0, 10))
+
+        self.log = scrolledtext.ScrolledText(
+            outer, wrap="word", state="disabled", font=("Consolas", 10)
+        )
+        self.log.grid(row=10, column=0, columnspan=3, sticky="nsew")
+
+        # --- Вкладка 2: CSV -> DataMatrix ---
+        tab2 = ttk.Frame(self.notebook, padding=12)
+        self.notebook.add(tab2, text="CSV → DataMatrix")
+        tab2.columnconfigure(0, weight=1)
+
+        # Внутренняя панель: слева — ввод, справа — предпросмотр
+        tab2_body = ttk.Frame(tab2)
+        tab2_body.grid(row=0, column=0, sticky="nsew")
+        tab2.rowconfigure(0, weight=1)
+        tab2_body.columnconfigure(0, weight=1)
+        tab2_body.columnconfigure(1, weight=0)
+
+        # ===== Левая часть: настройки =====
+        left = ttk.Frame(tab2_body, padding=(0, 0, 12, 0))
+        left.grid(row=0, column=0, sticky="nsew")
+        left.columnconfigure(1, weight=1)
+
+        ttk.Label(left, text="Файл CSV (по одному коду в строке):").grid(
+            row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+        )
+        self.dm_csv_entry = ttk.Entry(left, textvariable=self.dm_csv_var)
+        self.dm_csv_entry.grid(row=0, column=1, sticky="ew", pady=(0, 8))
+        self.dm_pick_files_btn = ttk.Button(
+            left, text="Выбрать файлы", command=self._select_dm_csv
+        )
+        self.dm_pick_files_btn.grid(row=0, column=2, padx=(8, 0), pady=(0, 8))
+        self.dm_pick_folder_btn = ttk.Button(
+            left, text="Выбрать папку", command=self._select_dm_folder
+        )
+        self.dm_pick_folder_btn.grid(row=0, column=3, padx=(8, 0), pady=(0, 8))
+
+        # Группа товара
+        ttk.Label(left, text="Группа товара:").grid(
+            row=1, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+        )
+        groups = [
+            "— без группы —", "Медизделия", "Духи/парфюмерия", "Косметика",
+            "Лёгкая промышленность", "Антисептики",
+        ]
+        self.dm_group_combo = ttk.Combobox(
+            left, textvariable=self.dm_group_var, values=groups,
+            state="readonly", width=16,
+        )
+        self.dm_group_combo.grid(row=1, column=1, sticky="w", pady=(0, 8))
+        self.dm_group_combo.bind("<<ComboboxSelected>>", self._on_dm_group_change)
+
+        # Размер этикетки
+        ttk.Label(left, text="Размер этикетки (мм):").grid(
+            row=2, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+        )
+        self.dm_size_combo = ttk.Combobox(
+            left, textvariable=self.dm_label_size_var,
+            values=self._sizes_for_group(self.dm_group_var.get()),
+            state="readonly", width=16,
+        )
+        self.dm_size_combo.grid(row=2, column=1, sticky="w", pady=(0, 8))
+        self.dm_size_combo.bind("<<ComboboxSelected>>", self._on_preview_input_change)
+
+        # Дата производства и партия
+        ttk.Label(left, text="Дата произв. (ДД.ММ.ГГГГ / ММ.ГГГГ):").grid(
+            row=3, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+        )
+        self.dm_date_entry = ttk.Entry(left, textvariable=self.dm_date_var)
+        self.dm_date_entry.grid(row=3, column=1, sticky="ew", pady=(0, 8))
+        self.dm_date_entry.bind("<KeyRelease>", self._on_date_format)
+
+        ttk.Label(left, text="Партия:").grid(
+            row=4, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+        )
+        self.dm_batch_entry = ttk.Entry(left, textvariable=self.dm_batch_var)
+        self.dm_batch_entry.grid(row=4, column=1, sticky="ew", pady=(0, 8))
+        self.dm_batch_entry.bind("<KeyRelease>", self._on_preview_input_change)
+
+        ttk.Label(left, text="Наименование:").grid(
+            row=5, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+        )
+        self.dm_name_entry = ttk.Entry(left, textvariable=self.dm_name_var)
+        self.dm_name_entry.grid(row=5, column=1, sticky="ew", pady=(0, 8))
+        self.dm_name_entry.bind("<KeyRelease>", self._on_preview_input_change)
+
+        ttk.Label(left, text="Сохранить PDF:").grid(
+            row=6, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+        )
+        self.dm_pdf_entry = ttk.Entry(left, textvariable=self.dm_pdf_var)
+        self.dm_pdf_entry.grid(row=6, column=1, sticky="ew", pady=(0, 8))
+        ttk.Button(left, text="Выбрать PDF", command=self._select_dm_pdf).grid(
+            row=6, column=2, padx=(8, 0), pady=(0, 8)
+        )
+
+        ttk.Label(left, text="Показывать на этикетке:").grid(
+            row=7, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+        )
+
+        show_opts = ttk.Frame(left)
+        show_opts.grid(row=7, column=1, columnspan=2, sticky="w", pady=(0, 8))
+        self.dm_show_date_check = ttk.Checkbutton(
+            show_opts, text="Дата произв.", variable=self.dm_show_date_var, command=self._on_show_change
+        )
+        self.dm_show_date_check.grid(row=0, column=0, sticky="w", padx=(0, 12))
+        self.dm_show_batch_check = ttk.Checkbutton(
+            show_opts, text="Партия", variable=self.dm_show_batch_var, command=self._on_show_change
+        )
+        self.dm_show_batch_check.grid(row=0, column=1, sticky="w", padx=(0, 12))
+        self.dm_show_code_check = ttk.Checkbutton(
+            show_opts, text="Код маркировки", variable=self.dm_show_code_var, command=self._on_show_change
+        )
+        self.dm_show_code_check.grid(row=0, column=2, sticky="w")
+        self.dm_show_short_check = ttk.Checkbutton(
+            show_opts, text="Укороченный код", variable=self.dm_show_short_var,
+            command=self._on_show_change,
+        )
+        self.dm_show_short_check.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
+
+        dm_actions = ttk.Frame(left)
+        dm_actions.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        self.dm_generate_button = ttk.Button(
+            dm_actions, text="Сгенерировать PDF", command=self._generate_dm_pdf
+        )
+        self.dm_generate_button.grid(row=0, column=0, padx=(0, 8))
+        self.dm_preview_button = ttk.Button(
+            dm_actions, text="Предпросмотр", command=self._open_full_preview
+        )
+        self.dm_preview_button.grid(row=0, column=1, padx=(0, 8))
+        self.dm_print_button = ttk.Button(
+            dm_actions, text="Печать", command=self._print_dm_pdf
+        )
+        self.dm_print_button.grid(row=0, column=2, padx=(0, 8))
+        self.dm_openfolder_button = ttk.Button(
+            dm_actions, text="Открыть папку", command=self._open_dm_output_folder
+        )
+        self.dm_openfolder_button.grid(row=0, column=3, padx=(0, 8))
+        self.dm_exportpng_button = ttk.Button(
+            dm_actions, text="Экспорт PNG", command=self._export_dm_png
+        )
+        self.dm_exportpng_button.grid(row=0, column=4, padx=(0, 8))
+
+        self.dm_action_row = dm_actions
+
+        self.dm_log = scrolledtext.ScrolledText(
+            left, wrap="word", state="disabled", font=("Consolas", 10)
+        )
+        self.dm_log.grid(row=9, column=0, columnspan=3, sticky="nsew", pady=(0, 8))
+        left.rowconfigure(9, weight=1)
+
+        ttk.Label(left, textvariable=self.dm_status_var, anchor="w").grid(
+            row=10, column=0, columnspan=3, sticky="ew"
+        )
+
+        # ===== Правая часть: живой макет одной этикетки =====
+        live_frame = ttk.LabelFrame(tab2_body, text="Макет этикетки (пример)")
+        live_frame.grid(row=0, column=1, sticky="nsew", padx=(12, 0))
+        live_frame.columnconfigure(0, weight=1)
+        live_frame.rowconfigure(0, weight=1)
+
+        self.dm_live_canvas = tk.Canvas(
+            live_frame, bg="#ffffff", highlightthickness=0, height=340
+        )
+        self.dm_live_canvas.grid(row=0, column=0, sticky="nsew")
+        self.dm_live_canvas.pack_propagate(False)
+
+        # при первом построении интерфейса рисуем пустой макет
+        self.root.after(100, self._update_live_mock)
+
+        # --- Вкладка 3: Полный предпросмотр всех этикеток ---
+        tab3 = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(tab3, text="Предпросмотр")
+        tab3.columnconfigure(0, weight=1)
+        tab3.rowconfigure(1, weight=1)
+
+        ttk.Label(
+            tab3,
+            text="Полный предпросмотр всех этикеток. Нажмите «Обновить», "
+                 "чтобы перестроить его по текущим настройкам.",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+        self.dm_full_preview_canvas = tk.Canvas(
+            tab3, bg="#ffffff", highlightthickness=0, yscrollcommand=None
+        )
+        self.dm_full_preview_canvas.grid(row=1, column=0, sticky="nsew")
+        self.dm_full_preview_scrollbar = ttk.Scrollbar(
+            tab3, orient="vertical", command=self.dm_full_preview_canvas.yview
+        )
+        self.dm_full_preview_scrollbar.grid(row=1, column=1, sticky="ns")
+        self.dm_full_preview_canvas.configure(
+            yscrollcommand=self.dm_full_preview_scrollbar.set
+        )
+
+        # колесо мыши на полном предпросмотре
+        def _on_fullwheel(event) -> None:
+            if self.dm_full_preview_canvas.winfo_exists():
+                self.dm_full_preview_canvas.yview_scroll(
+                    int(-1 * (event.delta / 120)), "units"
+                )
+
+        self.dm_full_preview_canvas.bind(
+            "<Enter>", lambda _e: self.dm_full_preview_canvas.bind_all(
+                "<MouseWheel>", _on_fullwheel)
+        )
+        self.dm_full_preview_canvas.bind(
+            "<Leave>", lambda _e: self.dm_full_preview_canvas.unbind_all("<MouseWheel>")
+        )
+
+        ttk.Button(
+            tab3, text="Обновить предпросмотр",
+            command=lambda: self._render_full_preview(),
+        ).grid(row=0, column=1, sticky="e", pady=(0, 8))
+
+    def _set_dm_csv_files(self, files: list[Path]) -> None:
+        """Сохраняет список CSV-файлов и обновляет поле выбора и предпросмотр."""
+        self._dm_csv_files = list(files)
+        if not files:
+            return
+        if len(files) == 1:
+            self.dm_csv_var.set(str(files[0]))
+            self.dm_pdf_var.set(str(files[0].with_suffix(".pdf")))
+        else:
+            self.dm_csv_var.set(
+                f"{len(files)} файлов: "
+                + "; ".join(str(p) for p in files[:2])
+                + (" ..." if len(files) > 2 else "")
+            )
+            self.dm_pdf_var.set(str(files[0].with_suffix(".pdf")))
+        self._update_live_mock()
+
+    def _schedule_preview(self, delay_ms: int = 30) -> None:
+        """Отложенный запуск предпросмотра — чтобы канвас успел получить
+        размер и не было дёргания рамки при перерисовке."""
+        if hasattr(self, "_preview_after_id") and self._preview_after_id:
+            try:
+                self.root.after_cancel(self._preview_after_id)
+            except Exception:
+                pass
+        self._preview_after_id = self.root.after(delay_ms, self._preview_dm)
+
+    def _select_dm_csv(self) -> None:
+        selected = filedialog.askopenfilenames(
+            title="Выберите один или несколько CSV-файлов с кодами",
+            filetypes=(("CSV files", "*.csv"), ("Text files", "*.txt"), ("All files", "*.*")),
+        )
+        if selected:
+            self._set_dm_csv_files([Path(p) for p in selected])
+
+    def _select_dm_folder(self) -> None:
+        folder = filedialog.askdirectory(
+            title="Выберите папку с CSV-файлами кодов"
+        )
+        if not folder:
+            return
+        root = Path(folder)
+        files = [
+            p for p in root.rglob("*")
+            if p.is_file() and p.suffix.lower() in (".csv", ".txt")
+        ]
+        if not files:
+            messagebox.showerror("Ошибка", f"В папке не найдено CSV/TXT-файлов:\n{folder}")
+            return
+        self._set_dm_csv_files(sorted(files, key=lambda p: str(p).casefold()))
+
+    def _select_dm_pdf(self) -> None:
+        selected = filedialog.asksaveasfilename(
+            title="Куда сохранить PDF",
+            initialdir=self.last_output_dir or str(Path.home()),
+            initialfile="Коды_DataMatrix.pdf",
+            defaultextension=".pdf",
+            filetypes=(("PDF files", "*.pdf"), ("All files", "*.*")),
+            confirmoverwrite=False,
+        )
+        if selected:
+            self.dm_pdf_var.set(selected)
+
+    def _open_dm_output_folder(self) -> None:
+        """Открывает папку, где сохраняется/был сохранён PDF."""
+        out_path = self.dm_pdf_var.get().strip()
+        if out_path:
+            folder = Path(out_path).parent
+            if folder.is_dir():
+                os.startfile(str(folder))  # type: ignore[attr-defined]
+                return
+        # если путь не задан — открываем последнюю папку вывода или домашнюю
+        folder = self.last_output_dir or str(Path.home())
+        if os.path.isdir(folder):
+            os.startfile(str(folder))  # type: ignore[attr-defined]
+        else:
+            messagebox.showerror("Ошибка", "Папка не найдена")
+
+    def _export_dm_png(self) -> None:
+        """Экспортирует каждую этикетку как отдельный PNG в выбранную папку."""
+        from converter import export_labels_png, parse_csv_codes
+
+        files = getattr(self, "_dm_csv_files", None) or []
+        if not files:
+            single = self.dm_csv_var.get().strip()
+            if single:
+                files = [Path(single)]
+        if not files:
+            messagebox.showerror("Ошибка", "Сначала выберите CSV-файл(ы)")
+            return
+        out_dir = filedialog.askdirectory(
+            title="Куда сохранить PNG-этикетки",
+            initialdir=self.last_output_dir or str(Path.home()),
+        )
+        if not out_dir:
+            return
+
+        bad_date = self._check_bad_date()
+        if bad_date:
+            messagebox.showerror("Ошибка", f"Неверная дата: {bad_date}")
+            return
+
+        try:
+            size_w, size_h = self._parse_label_size(self.dm_label_size_var.get())
+        except ValueError:
+            messagebox.showerror("Ошибка", "Выберите корректный размер этикетки")
+            return
+        csv_text = self._collect_dm_csv_text()
+        total_codes = len(parse_csv_codes(csv_text))
+
+        self.dm_status_var.set("Экспорт PNG...")
+        self.dm_exportpng_button.configure(state="disabled")
+
+        def work() -> None:
+            try:
+                saved, err = export_labels_png(
+                    csv_text,
+                    Path(out_dir),
+                    label_w_mm=size_w,
+                    label_h_mm=size_h,
+                    heading=self.dm_name_var.get().strip(),
+                    production_date=self.dm_date_var.get().strip(),
+                    batch=self.dm_batch_var.get().strip(),
+                    show_date=self.dm_show_date_var.get(),
+                    show_batch=self.dm_show_batch_var.get(),
+                    show_code=self.dm_show_code_var.get(),
+                    use_short=self.dm_show_short_var.get(),
+                )
+                if err:
+                    self.root.after(0, lambda: messagebox.showerror("Ошибка", err))
+                else:
+                    self.root.after(0, lambda: messagebox.showinfo(
+                        "Экспорт завершён",
+                        f"Сохранено этикеток: {saved} из {total_codes}\nв папку:\n{out_dir}",
+                    ))
+                    self.root.after(0, lambda: self.dm_status_var.set(
+                        f"Экспорт: {saved} из {total_codes}"))
+            except Exception as exc:
+                self.root.after(0, lambda: messagebox.showerror("Ошибка", str(exc)))
+            finally:
+                self.root.after(0, lambda: self.dm_exportpng_button.configure(state="normal"))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _collect_dm_csv_text(self) -> str:
+        """Возвращает объединённый текст кодов из всех выбранных CSV-файлов."""
+        import io
+        files = getattr(self, "_dm_csv_files", None) or []
+        if not files:
+            single = self.dm_csv_var.get().strip()
+            if single:
+                files = [Path(single)]
+        parts = []
+        for f in files:
+            text = f.read_text(encoding="utf-8-sig", errors="replace").rstrip("\r\n")
+            if text:
+                parts.append(text)
+        return "\n".join(parts)
+
+    def _check_bad_date(self) -> str:
+        """Возвращает текст ошибки, если поле даты заполнено и невалидно;
+        подсвечивает поле красным. Иначе возвращает пустую строку."""
+        self._mark_date_status()
+        reason = self._invalid_date_reason()
+        return reason or ""
+
+    def _generate_dm_pdf(self) -> None:
+        out_path = self.dm_pdf_var.get().strip()
+        files = getattr(self, "_dm_csv_files", None) or []
+        if not files:
+            single = self.dm_csv_var.get().strip()
+            if single:
+                files = [Path(single)]
+        if not files:
+            messagebox.showerror("Ошибка", "Не выбран ни один CSV-файл")
+            return
+        if not out_path:
+            messagebox.showerror("Ошибка", "Не указан путь для PDF")
+            return
+        out_path = Path(out_path)
+        missing = [str(f) for f in files if not f.is_file()]
+        if missing:
+            messagebox.showerror(
+                "Ошибка", f"CSV-файл не найден:\n" + "\n".join(missing)
+            )
+            return
+        bad_date = self._check_bad_date()
+        if bad_date:
+            messagebox.showerror("Ошибка", f"Неверная дата: {bad_date}")
+            return
+
+        try:
+            size_w, size_h = self._parse_label_size(self.dm_label_size_var.get())
+        except ValueError:
+            messagebox.showerror("Ошибка", "Выберите корректный размер этикетки")
+            return
+
+        self.dm_log.configure(state="normal")
+        self.dm_log.delete("1.0", "end")
+        self.dm_log.configure(state="disabled")
+
+        def _append_log(text: str) -> None:
+            self.dm_log.configure(state="normal")
+            self.dm_log.insert("end", text)
+            self.dm_log.see("end")
+            self.dm_log.configure(state="disabled")
+
+        try:
+            csv_text = self._collect_dm_csv_text()
+        except Exception as exc:
+            messagebox.showerror("Ошибка", f"Не удалось прочитать CSV:\n{exc}")
+            return
+
+        from converter import parse_csv_codes
+        all_codes = parse_csv_codes(csv_text)
+        total_codes = len(all_codes)
+
+        self.dm_status_var.set(f"Генерация (всего: {total_codes})...")
+        self.dm_generate_button.configure(state="disabled")
+
+        def work() -> None:
+            try:
+                scale = self._dm_scale_for(size_w)
+                pages, err = generate_label_pdf(
+                    csv_text,
+                    out_path,
+                    label_w_mm=size_w,
+                    label_h_mm=size_h,
+                    heading=self.dm_name_var.get().strip(),
+                    production_date=self.dm_date_var.get().strip(),
+                    batch=self.dm_batch_var.get().strip(),
+                    show_date=self.dm_show_date_var.get(),
+                    show_batch=self.dm_show_batch_var.get(),
+                    show_code=self.dm_show_code_var.get(),
+                    use_short=self.dm_show_short_var.get(),
+                    scale=scale,
+                )
+                if err and pages == 0:
+                    self.root.after(0, lambda: messagebox.showerror("Ошибка", err))
+                    self.root.after(0, lambda: self.dm_status_var.set("Ошибка"))
+                else:
+                    self.last_output_dir = str(out_path.parent)
+                    if err:
+                        self.root.after(0, lambda: messagebox.showwarning(
+                            "Предупреждение", err))
+                        self.root.after(0, lambda: self.dm_status_var.set(
+                            f"Готово: {pages} из {total_codes} (часть пропущена)"))
+                    else:
+                        self.root.after(0, lambda: self.dm_status_var.set(
+                            f"Готово: {pages} из {total_codes}"))
+                    self.root.after(0, lambda: _append_log(
+                        f"Создан PDF: {out_path}\n  Страниц: {pages}\n"))
+            except Exception as exc:
+                self.root.after(0, lambda: messagebox.showerror("Ошибка", str(exc)))
+                self.root.after(0, lambda: self.dm_status_var.set("Ошибка"))
+            finally:
+                self.root.after(0, lambda: self.dm_generate_button.configure(state="normal"))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _parse_label_size(self, label: str) -> tuple[float, float]:
+        """Разбирает строку вида '58 × 40' в (ширина, высота) в мм."""
+        label = label.replace("×", "x").replace("*", "x").replace(" ", "")
+        parts = label.split("x")
+        if len(parts) != 2:
+            raise ValueError(f"Неверный размер: {label!r}")
+        w = float(parts[0])
+        h = float(parts[1])
+        if w <= 0 or h <= 0:
+            raise ValueError("Размер этикетки должен быть положительным")
+        return w, h
+
+    def _dm_scale_for(self, size_w: float) -> int:
+        """Масштаб Zint (множитель модуля) под ширину этикетки, чтобы
+        DataMatrix был достаточно крупным (не меньше 10×10 мм) для сканирования."""
+        # размер модуля 0.254 мм => при ширине этикетки подкручиваем масштаб
+        # ориентировочно: на 40 мм ширины ~ scale 4, на 58 мм ~ scale 6
+        if size_w <= 40:
+            return 4
+        if size_w <= 50:
+            return 5
+        if size_w <= 60:
+            return 6
+        return 8
+
+    def _on_dm_group_change(self, _event=None) -> None:
+        """Подсказка по требуемому размеру/элементу кода и подбор размеров."""
+        group = self.dm_group_var.get()
+        hint = {
+            "Медизделия": "Мин. элемент кода 0,255–0,680 мм",
+            "Духи/парфюмерия": "Мин. элемент кода 0,255–0,615 мм",
+            "Косметика": "Мин. элемент кода 0,255–0,615 мм; удобен формат 25×25",
+            "Лёгкая промышленность": "Мин. элемент кода 0,255–0,680 мм (ППРФ №1956)",
+            "Антисептики": "Мин. элемент кода 0,255–0,615 мм",
+        }.get(group)
+        if hasattr(self, "dm_size_combo"):
+            sizes = self._sizes_for_group(group)
+            self.dm_size_combo.configure(values=sizes)
+            if self.dm_label_size_var.get() not in sizes:
+                self.dm_label_size_var.set(sizes[0] if sizes else "58 × 40")
+        if hint:
+            self.dm_status_var.set(hint)
+        self._update_live_mock()
+
+    def _print_dm_pdf(self) -> None:
+        """Печатает этикетки: строит PDF во временный файл и отправляет на
+        печать штатным диалогом Windows."""
+        from converter import generate_label_pdf, print_pdf_windows
+
+        files = getattr(self, "_dm_csv_files", None) or []
+        if not files:
+            single = self.dm_csv_var.get().strip()
+            if single:
+                files = [Path(single)]
+        if not files:
+            messagebox.showerror("Ошибка", "Сначала выберите CSV-файл(ы)")
+            return
+        missing = [str(f) for f in files if not f.is_file()]
+        if missing:
+            messagebox.showerror("Ошибка", f"CSV-файл не найден:\n" + "\n".join(missing))
+            return
+        bad_date = self._check_bad_date()
+        if bad_date:
+            messagebox.showerror("Ошибка", f"Неверная дата: {bad_date}")
+            return
+
+        try:
+            size_w, size_h = self._parse_label_size(self.dm_label_size_var.get())
+        except ValueError:
+            messagebox.showerror("Ошибка", "Выберите корректный размер этикетки")
+            return
+
+        self.dm_status_var.set("Подготовка к печати...")
+        self.dm_print_button.configure(state="disabled")
+
+        def work() -> None:
+            import tempfile
+            tmp_pdf = Path(tempfile.gettempdir()) / "delfin_dm_print.pdf"
+            try:
+                csv_text = self._collect_dm_csv_text()
+                scale = self._dm_scale_for(size_w)
+                pages, err = generate_label_pdf(
+                    csv_text,
+                    tmp_pdf,
+                    label_w_mm=size_w,
+                    label_h_mm=size_h,
+                    heading=self.dm_name_var.get().strip(),
+                    production_date=self.dm_date_var.get().strip(),
+                    batch=self.dm_batch_var.get().strip(),
+                    show_date=self.dm_show_date_var.get(),
+                    show_batch=self.dm_show_batch_var.get(),
+                    show_code=self.dm_show_code_var.get(),
+                    use_short=self.dm_show_short_var.get(),
+                    scale=scale,
+                )
+                if err and pages == 0:
+                    self.root.after(0, lambda: messagebox.showerror("Ошибка", err))
+                else:
+                    if err:
+                        self.root.after(0, lambda: messagebox.showwarning(
+                            "Предупреждение", err))
+                    perr = print_pdf_windows(tmp_pdf)
+                    if perr:
+                        self.root.after(0, lambda: messagebox.showerror("Ошибка", perr))
+                    else:
+                        self.root.after(0, lambda: self.dm_status_var.set(
+                            f"Печать открыта: {pages} этикеток"
+                        ))
+            except Exception as exc:
+                self.root.after(0, lambda: messagebox.showerror("Ошибка", str(exc)))
+            finally:
+                self.root.after(0, lambda: self.dm_print_button.configure(state="normal"))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _preview_dm(self) -> None:
+        files = getattr(self, "_dm_csv_files", None) or []
+        if not files:
+            single = self.dm_csv_var.get().strip()
+            if single:
+                files = [Path(single)]
+        if not files:
+            messagebox.showerror("Ошибка", "Сначала выберите CSV-файл(ы)")
+            return
+        missing = [str(f) for f in files if not f.is_file()]
+        if missing:
+            messagebox.showerror("Ошибка", f"CSV-файл не найден:\n" + "\n".join(missing))
+            return
+
+        self.dm_status_var.set("Генерация предпросмотра...")
+
+        # защита от одновременного запуска нескольких потоков (гонка):
+        # если предпросмотр уже генерируется — не запускаем новый
+        if getattr(self, "_preview_busy", False):
+            return
+        self._preview_busy = True
+
+        def work() -> None:
+            try:
+                csv_text = self._collect_dm_csv_text()
+                combined, total = self._build_preview_images(csv_text, max_codes=10 ** 9)
+                # отрисовку делаем в главном потоке Tk (из фонового нельзя)
+                self.root.after(0, lambda: self._draw_preview(combined, total))
+            except Exception as exc:
+                self.root.after(0, lambda: messagebox.showerror("Ошибка", str(exc)))
+                self.root.after(0, lambda: self.dm_status_var.set("Ошибка"))
+            finally:
+                self._preview_busy = False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _open_full_preview(self) -> None:
+        """Переключается на вкладку «Предпросмотр» и запускает полный
+        предпросмотр всех этикеток."""
+        self.notebook.select(self.notebook.index("end") - 1)
+        self._render_full_preview()
+
+    def _render_full_preview(self) -> None:
+        """Запускает полный предпросмотр всех этикеток (в фоновом потоке)."""
+        files = getattr(self, "_dm_csv_files", None) or []
+        if not files:
+            single = self.dm_csv_var.get().strip()
+            if single:
+                files = [Path(single)]
+        if not files:
+            messagebox.showerror("Ошибка", "Сначала выберите CSV-файл(ы)")
+            return
+        self.dm_status_var.set("Генерация предпросмотра...")
+        if getattr(self, "_preview_busy", False):
+            return
+        self._preview_busy = True
+
+        def work() -> None:
+            try:
+                csv_text = self._collect_dm_csv_text()
+                combined, total = self._build_preview_images(csv_text, max_codes=10 ** 9)
+                self.root.after(0, lambda: self._draw_preview(combined, total))
+            except Exception as exc:
+                self.root.after(0, lambda: messagebox.showerror("Ошибка", str(exc)))
+                self.root.after(0, lambda: self.dm_status_var.set("Ошибка"))
+            finally:
+                self._preview_busy = False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _build_preview_images(
+        self, csv_text: str, max_codes: int
+    ) -> tuple[object, int]:
+        """Генерирует ОДНО общее изображение всех этикеток в фоновом потоке.
+
+        Возвращает (комбинированное PIL-изображение, число этикеток).
+        Компоновка в одно изображение позволяет показать результат одним
+        кадром без мерцания канваса. Не трогает Tk-виджеты.
+        """
+        import subprocess
+        import tempfile
+        from converter import parse_csv_codes, gs1data_to_zint_data, find_zint_exe
+        from PIL import Image, ImageDraw, ImageFont
+
+        codes = parse_csv_codes(csv_text)
+        codes = codes[:max_codes]
+        zint_exe = find_zint_exe()
+        if zint_exe is None:
+            raise RuntimeError("Не найден zint.exe")
+
+        try:
+            size_w, size_h = self._parse_label_size(self.dm_label_size_var.get())
+        except ValueError:
+            raise RuntimeError("Выберите корректный размер этикетки")
+        production_date = self.dm_date_var.get().strip()
+        batch = self.dm_batch_var.get().strip()
+        show_date = self.dm_show_date_var.get()
+        show_batch = self.dm_show_batch_var.get()
+        show_code = self.dm_show_code_var.get()
+
+        canvas_w = self.dm_full_preview_canvas.winfo_width()
+        if canvas_w < 100:
+            canvas_w = 300
+        max_display_w = canvas_w - 24
+        disp_w = min(int(340), max_display_w)
+        disp_h = int(round(disp_w * size_h / size_w))  # сохраняем пропорции (мм)
+        if disp_h > 460:
+            factor = 460 / disp_h
+            disp_h = 460
+            disp_w = int(disp_w * factor)
+        scale = 1 + int(disp_w // 60)  # масштаб zint под размер кода
+
+        try:
+            font = ImageFont.truetype("arial.ttf", 11)
+        except Exception:
+            font = ImageFont.load_default()
+
+        labels: list[Image.Image] = []
+        for idx, code in enumerate(codes[:max_codes]):
+            try:
+                zint_data = gs1data_to_zint_data(code)
+                with tempfile.TemporaryDirectory() as td:
+                    png_path = Path(td) / f"{idx}.png"
+                    proc = subprocess.run(
+                        [str(zint_exe), "-b", "DATAMATRIX", "--gs1", "--gssep",
+                         f"--scale={scale}", "-d", zint_data,
+                         "-o", str(png_path)],
+                        capture_output=True, text=True,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    )
+                    if proc.returncode != 0 or not png_path.exists():
+                        continue
+
+                    dm = Image.open(str(png_path)).convert("RGBA")
+                    label = Image.new("RGBA", (disp_w, disp_h), "white")
+                    draw = ImageDraw.Draw(label)
+
+                    # DataMatrix — в верхней части этикетки (крупный)
+                    m = 8
+                    top_margin = 10  # небольшой отступ сверху
+                    top_area_h = int(disp_h * 0.62)
+                    dm_w = disp_w - 2 * m
+                    dm_h = int(dm_w * dm.height / dm.width)
+                    if dm_h > top_area_h - top_margin:
+                        dm_h = top_area_h - top_margin
+                        dm_w = int(dm_h * dm.width / dm.height)
+                    dm_resized = dm.resize((dm_w, dm_h), Image.LANCZOS)
+                    label.paste(dm_resized, ((disp_w - dm_w) // 2, top_margin), dm_resized)
+
+                    # текст под штрихкодом — по центру этикетки (как в макете)
+                    y_text = top_margin + dm_h + 6
+                    name = self.dm_name_var.get().strip()
+                    lines = []
+                    if show_date and production_date:
+                        lines.append(f"Дата производства: {production_date}")
+                    if show_batch and batch:
+                        lines.append(f"Партия: {batch}")
+                    if name:
+                        lines.append(name)
+                    if show_code:
+                        lines.append(code.replace("\x1d", "\u29f8"))
+                    for line in lines:
+                        line_w = draw.textlength(line, font=font)
+                        draw.text(((disp_w - line_w) / 2, y_text), line, fill="black", font=font)
+                        y_text += 13
+                    labels.append(label)
+            except Exception:
+                # ошибочный код (некорректный формат) — пропускаем, не срывая весь предпросмотр
+                continue
+
+        # компонуем все этикетки в одно вертикальное изображение
+        if not labels:
+            return Image.new("RGBA", (400, 100), "white"), 0
+        gap = 22
+        combined_h = sum(l.height for l in labels) + gap * (len(labels))
+        combined = Image.new("RGBA", (max(l.width for l in labels) + 40, combined_h), "#f0f0f0")
+        y_off = 14
+        for i, lab in enumerate(labels):
+            combined.paste(lab, (20, y_off), lab)
+            # подпись номера этикетки
+            d = ImageDraw.Draw(combined)
+            lbl = f"Этикетка {i + 1}"
+            if hasattr(d, "textlength"):
+                tw = d.textlength(lbl, font=font)
+            else:
+                tw = len(lbl) * 5
+            d.text(((combined.width - tw) / 2, y_off + lab.height + 3), lbl,
+                   fill="#888888", font=font)
+            y_off += lab.height + gap
+        return combined, len(labels)
+
+    def _draw_preview(self, combined: object, code_count: int) -> None:
+        """Отрисовывает готовое комбинированное изображение этикеток одним
+        кадром (главный поток). Устраняет мерцание канваса."""
+        from PIL import ImageTk
+
+        cv = self.dm_full_preview_canvas
+        cv.delete("all")
+        cv.update_idletasks()  # убеждаемся, что канвас очищен до нового рисунка
+        if combined is None:
+            canvas_w = cv.winfo_width() or 300
+            cv.configure(scrollregion=(0, 0, canvas_w, 100))
+            self.dm_status_var.set(f"Показано этикеток: {code_count}")
+            return
+        photo = ImageTk.PhotoImage(combined)
+        if not hasattr(self, "_dm_preview_images"):
+            self._dm_preview_images = []
+        self._dm_preview_images = [photo]
+        cv.create_image(0, 0, image=photo, anchor="nw")
+        canvas_w = cv.winfo_width() or 300
+        total_h = combined.height + 20
+        cv.configure(scrollregion=(0, 0, max(canvas_w, combined.width), total_h))
+        self.dm_status_var.set(f"Показано этикеток: {code_count}")
+
+    def _sizes_for_group(self, group: str) -> list[str]:
+        """Доступные размеры этикеток в зависимости от выбранной группы."""
+        all_sizes = ["25 × 25", "30 × 20", "40 × 30", "43 × 25", "50 × 30",
+                     "57 × 40", "58 × 40", "58 × 60", "60 × 40", "90 × 60"]
+        if group in ("Медизделия", "Косметика", "— без группы —"):
+            return all_sizes
+        if group in ("Духи/парфюмерия",):
+            return ["25 × 25", "30 × 20", "43 × 25", "58 × 40"]
+        if group == "Лёгкая промышленность":
+            return ["40 × 30", "50 × 30", "58 × 40", "58 × 60", "60 × 40", "90 × 60"]
+        if group == "Антисептики":
+            return ["30 × 20", "43 × 25", "58 × 40"]
+        return all_sizes
+
+    def _on_show_change(self, _event=None) -> None:
+        """При изменении галочек «что показывать» обновляет живой макет."""
+        self._update_live_mock()
+
+    def _update_live_mock(self) -> None:
+        """Рисует схематичный макет одной этикетки по текущим настройкам.
+        Мгновенно обновляется при любом изменении полей."""
+        canvas = getattr(self, "dm_live_canvas", None)
+        if canvas is None:
+            return
+        canvas.delete("all")
+        w = canvas.winfo_width()
+        if w < 50:
+            w = 300
+        h = canvas.winfo_height()
+        if h < 50:
+            h = 340
+
+        try:
+            size_w, size_h = self._parse_label_size(self.dm_label_size_var.get())
+        except ValueError:
+            size_w, size_h = 25, 25
+        # масштаб: вписать этикетку в канвас с отступами
+        scale = min((w - 40) / size_w, (h - 40) / size_h)
+        lbl_w = size_w * scale
+        lbl_h = size_h * scale
+        x0 = (w - lbl_w) / 2
+        y0 = 20
+
+        # контур этикетки
+        canvas.create_rectangle(
+            x0, y0, x0 + lbl_w, y0 + lbl_h,
+            outline="#555555", width=2, fill="#ffffff",
+        )
+
+        # реальный первый код из выбранного CSV (если есть)
+        first_code = self._first_csv_code()
+        dm_size = min(lbl_w * 0.62, lbl_h * 0.62)
+        dm_x = x0 + (lbl_w - dm_size) / 2
+        dm_y = y0 + 26
+
+        if first_code:
+            # Настоящий DataMatrix (по стандарту GS1/ECC200) подгружается
+            # асинхронно через zint — без окон и зависаний.
+            self._insert_real_dm_async(
+                first_code, dm_x, dm_y, int(dm_size)
+            )
+            # пока картинка не готова — placeholder-рамка
+            canvas.create_rectangle(
+                dm_x, dm_y, dm_x + dm_size, dm_y + dm_size,
+                outline="#cccccc", width=1, fill="#f8f8f8",
+            )
+            canvas.create_text(
+                dm_x + dm_size / 2, dm_y + dm_size / 2,
+                text="Загрузка...", fill="#999999", font=("Arial", 9),
+            )
+        else:
+            # файл не загружен — место под код
+            canvas.create_rectangle(
+                dm_x, dm_y, dm_x + dm_size, dm_y + dm_size,
+                outline="#cccccc", width=1, fill="#f8f8f8",
+            )
+            canvas.create_text(
+                dm_x + dm_size / 2, dm_y + dm_size / 2,
+                text="Загрузите файл", fill="#999999", font=("Arial", 9),
+            )
+
+        # текст под кодом: наименование, дата, партия, первый код
+        tx = x0
+        ty = dm_y + dm_size + 10
+        mini = max(5, int(5 * (lbl_w / 150)))
+        line = lambda s: canvas.create_text(
+            x0 + lbl_w / 2, ty, text=s or " ", fill="#333333",
+            font=("Arial", mini), anchor="n"
+        )
+        if self.dm_show_date_var.get() and self.dm_date_var.get().strip():
+            line(f"Дата производства: {self.dm_date_var.get().strip()}")
+            ty += mini + 6
+        if self.dm_show_batch_var.get() and self.dm_batch_var.get().strip():
+            line(f"Партия: {self.dm_batch_var.get().strip()}")
+            ty += mini + 6
+        if self.dm_name_var.get().strip():
+            line(self.dm_name_var.get().strip())
+            ty += mini + 6
+        if self.dm_show_code_var.get() and first_code:
+            shown = first_code.replace("\x1d", "␝")[:40]
+            line(shown)
+            ty += mini + 6
+        if not first_code:
+            line("(файл не загружен)")
+            ty += mini + 6
+
+    def _insert_real_dm_async(self, code: str, x, y, size: int) -> None:
+        """Генерирует настоящий GS1 DataMatrix через zint в фоновом потоке
+        (без окон) и вставляет картинку в макет по готовности."""
+        canvas = getattr(self, "dm_live_canvas", None)
+        if canvas is None:
+            return
+
+        def work() -> None:
+            try:
+                import subprocess
+                import tempfile
+                from pathlib import Path
+                from converter import (
+                    find_zint_exe, gs1data_to_zint_data,
+                    code_identification, gs1data_to_zint_from_short,
+                    is_code_truncated,
+                )
+                from PIL import Image, ImageTk
+
+                zint_exe = find_zint_exe()
+                if zint_exe is None:
+                    return
+                if self.dm_show_short_var.get():
+                    data = gs1data_to_zint_from_short(code_identification(code))
+                else:
+                    data = gs1data_to_zint_data(code)
+                with tempfile.TemporaryDirectory() as td:
+                    png_path = Path(td) / "dm.png"
+                    proc = subprocess.run(
+                        [str(zint_exe), "-b", "DATAMATRIX", "--gs1", "--gssep",
+                         f"--scale=8", "-d", data, "-o", str(png_path)],
+                        capture_output=True, text=True,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    )
+                    if proc.returncode != 0 or not png_path.exists():
+                        return
+                    img = Image.open(str(png_path)).convert("RGB")
+                    img = img.resize((size, size), Image.LANCZOS)
+                    photo = ImageTk.PhotoImage(img)
+                    if not hasattr(self, "_live_photo"):
+                        self._live_photo = None
+                    self._live_photo = photo
+                    # вставляем в главном потоке
+                    self.root.after(0, lambda: canvas.create_image(
+                        x, y, image=photo, anchor="nw"))
+            except Exception:
+                pass
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _gs_char(self) -> str:
+        return "\x1d"
+
+    def _first_csv_code(self) -> str:
+        """Возвращает первый реальный код из выбранных CSV-файлов (если есть)."""
+        try:
+            from converter import parse_csv_codes
+            text = self._collect_dm_csv_text()
+            codes = parse_csv_codes(text)
+            return codes[0] if codes else ""
+        except Exception:
+            return ""
+
+        canvas.create_text(
+            x0 + lbl_w / 2, y0 + lbl_h + 8,
+            text=f"{size_w} × {size_h} мм",
+            fill="#888888", font=("Arial", 9),
+        )
+
+    @staticmethod
+    def _draw_dm_mock(canvas, x, y, nx, ny, cell) -> None:
+        """Рисует прямоугольную сетку точек (схема DataMatrix)."""
+        import random
+        random.seed(42)
+        for ix in range(nx):
+            for iy in range(ny):
+                fill = "#000000" if (ix + iy * 7) % 3 == 0 else "#ffffff"
+                canvas.create_rectangle(
+                    x + ix * cell, y + iy * cell,
+                    x + (ix + 1) * cell, y + (iy + 1) * cell,
+                    fill=fill, outline=fill,
+                )
+
+    def _on_preview_input_change(self, _event=None) -> None:
+        """При изменении размера/даты/партии/наименования обновляет живой
+        макет этикетки (мгновенно, без тяжёлой генерации zint)."""
+        self._update_live_mock()
+
+    def _on_date_format(self, event=None) -> None:
+        """Автоматически вставляет точки в поле даты в формате ДД.ММ.ГГГГ."""
+        widget = self.dm_date_entry
+        if widget is None:
+            return
+        text = widget.get()
+        # убираем всё, кроме цифр (макс. 8: ДДММГГГГ или 4: ММГГ)
+        digits = "".join(ch for ch in text if ch.isdigit())[:8]
+        # прогрессивно ставим точки по мере ввода:
+        # после 2-й цифры — точка, после 4-й — ещё точка, далее год без точек
+        formatted = ""
+        for i, ch in enumerate(digits):
+            formatted += ch
+            if i in (1, 3) and i + 1 < len(digits):
+                formatted += "."
+        # обновляем поле, курсор в конец
+        if formatted != text:
+            widget.delete(0, "end")
+            widget.insert(0, formatted)
+        widget.icursor(len(widget.get()))
+        # подсветка поля по валидности
+        self._mark_date_status()
+        # обновляем живой макет
+        self._update_live_mock()
+
+    def _mark_date_status(self) -> None:
+        """Подсвечивает поле даты: красная рамка при неверном значении."""
+        widget = getattr(self, "dm_date_entry", None)
+        if widget is None:
+            return
+        err = self._validate_date_text(self.dm_date_var.get().strip())
+        try:
+            if self.dark_var.get():
+                bg = "#2b2b2b"
+            else:
+                bg = "#ffffff"
+        except Exception:
+            bg = "#ffffff"
+        if err:
+            widget.configure(background="#ffe0e0")
+        else:
+            widget.configure(background=bg)
+
+    def _validate_date_text(self, text: str):
+        """Проверяет дату в форматах ДД.ММ.ГГГГ или ММ.ГГГГ.
+        Возвращает None, если дата валидна, или текст ошибки.
+        Правила: день и месяц существуют; год не раньше 1900; дата
+        НЕ ПОЗЖЕ сегодняшнего дня (будущее запрещено; прошлое разрешено)."""
+        text = text.strip()
+        if not text:
+            return None  # поле пустое — не ошибка (дата опциональна)
+        import datetime
+        today = datetime.date.today()
+        cur_year = today.year
+        try:
+            parts = text.split(".")
+            if len(parts) == 3:
+                # ДД.ММ.ГГГГ
+                day, month, year = (int(p) for p in parts)
+                if day < 1 or day > 31:
+                    return f"Нет такого дня: {day}"
+                if month < 1 or month > 12:
+                    return f"Нет такого месяца: {month}"
+                if year < 1900:
+                    return "Год не может быть раньше 1900"
+                import calendar
+                max_day = calendar.monthrange(year, month)[1]
+                if day > max_day:
+                    return f"В месяце {month:02d}.{year} только {max_day} дней"
+                try:
+                    d = datetime.date(year, month, day)
+                except ValueError:
+                    return "Неверная дата"
+                if d > today:
+                    return "Дата производства не может быть позже сегодняшнего дня"
+                return None
+            elif len(parts) == 2:
+                # ММ.ГГГГ
+                month, year = (int(p) for p in parts)
+                if month < 1 or month > 12:
+                    return f"Нет такого месяца: {month}"
+                if year < 1900:
+                    return "Год не может быть раньше 1900"
+                if (year, month) > (today.year, today.month):
+                    return "Дата производства не может быть позже текущего месяца"
+                return None
+            else:
+                return "Неверный формат даты (ДД.ММ.ГГГГ или ММ.ГГГГ)"
+        except Exception:
+            return "Неверная дата"
+
+    def _invalid_date_reason(self) -> str | None:
+        """Возвращает текст ошибки даты, если поле заполнено и невалидно,
+        иначе None. Используется для блокировки генерации."""
+        text = self.dm_date_var.get().strip()
+        if self.dm_show_date_var.get() is False or not text:
+            return None
+        return self._validate_date_text(text)
+
+    def _select_pdf(self) -> None:
+        selected = filedialog.askopenfilenames(
+            title="Выберите один или несколько PDF-файлов",
+            filetypes=(("PDF files", "*.pdf"), ("All files", "*.*")),
+        )
+        if selected:
+            paths = [Path(p) for p in selected]
+            self._multi_source_files = paths
+            if len(paths) == 1:
+                path = paths[0]
+                self.source_var.set(str(path))
+                self.combined_output_var.set(str(default_combined_output_path(path)))
+            else:
+                self.source_var.set(
+                    f"{len(paths)} файлов: "
+                    + "; ".join(str(p) for p in paths[:3])
+                    + (" ..." if len(paths) > 3 else "")
+                )
+                self.combined_output_var.set(
+                    str(default_combined_output_path(paths[0].parent))
+                )
+            self._update_output_controls()
+
+    def _select_source_folder(self) -> None:
+        selected = filedialog.askdirectory(title="Выберите папку с PDF-файлами")
+        if selected:
+            self._multi_source_files = []
+            path = Path(selected)
+            self.source_var.set(str(path))
+            self.combined_output_var.set(str(default_combined_output_path(path)))
+
+    def _select_output_file(self) -> None:
+        current_text = self.combined_output_var.get().strip()
+        current_path = Path(current_text) if current_text else None
+        selected = filedialog.asksaveasfilename(
+            title="Выберите общий CSV-файл",
+            initialdir=str(current_path.parent) if current_path else None,
+            initialfile=current_path.name if current_path else None,
+            defaultextension=".csv",
+            filetypes=(("CSV files", "*.csv"), ("All files", "*.*")),
+            confirmoverwrite=False,
+        )
+        if selected:
+            self.combined_output_var.set(selected)
+
+    def _open_output_folder(self) -> None:
+        target = self.last_output_dir
+        if target and Path(target).is_dir():
+            try:
+                os.startfile(target)  # type: ignore[attr-defined]
+                return
+            except OSError:
+                pass
+        messagebox.showinfo(
+            "Папка не найдена",
+            "Сначала выполните конвертацию, чтобы было что открыть.",
+        )
+
+    def _export_excel(self) -> None:
+        codes = list(self._last_codes)
+        if not codes:
+            messagebox.showinfo(
+                "Нет данных",
+                "Сначала выполните конвертацию, чтобы появились коды.",
+            )
+            return
+        default_dir = self.last_output_dir or str(Path.home())
+        selected = filedialog.asksaveasfilename(
+            title="Сохранить Excel-файл",
+            initialdir=default_dir,
+            initialfile="Коды_маркировки.xlsx",
+            defaultextension=".xlsx",
+            filetypes=(("Excel files", "*.xlsx"), ("All files", "*.*")),
+            confirmoverwrite=False,
+        )
+        if not selected:
+            return
+        path = Path(selected)
+        try:
+            write_codes_xlsx(path, codes, escape_mode=self.escape_mode_var.get())
+        except Exception as exc:
+            messagebox.showerror("Ошибка", f"Не удалось сохранить Excel-файл:\n{exc}")
+            return
+        self.last_output_dir = str(path.parent)
+        self.status_var.set("Excel-файл сохранён")
+        self._append_log(f"Excel сохранён: {path}\n  Листов: 10 (все варианты)\n\n")
+        messagebox.showinfo("Готово", f"Excel-файл сохранён:\n{path}")
+
+    def _open_codes_dialog(self) -> None:
+        codes = list(self._last_codes)
+        if not codes:
+            messagebox.showinfo(
+                "Нет данных",
+                "Сначала выполните конвертацию, чтобы появились коды.",
+            )
+            return
+
+        def display_mc(mc: MarkingCode) -> str:
+            return apply_escape_mode(full_code_str(mc), self.escape_mode_var.get())
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Открыть код")
+        dialog.geometry("860x560")
+        dialog.minsize(620, 380)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        dialog.update_idletasks()
+        main_x = self.root.winfo_rootx()
+        main_y = self.root.winfo_rooty()
+        main_w = self.root.winfo_width()
+        main_h = self.root.winfo_height()
+        dlg_w = dialog.winfo_width()
+        dlg_h = dialog.winfo_height()
+        x = main_x + max(0, (main_w - dlg_w) // 2)
+        y = main_y + max(0, (main_h - dlg_h) // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+        dark = self.dark_var.get()
+        if dark:
+            dlgbg = "#1f1f1f"
+            fg = "#e8e8e8"
+        else:
+            dlgbg = "#f0f0f0"
+            fg = "#000000"
+        dialog.configure(bg=dlgbg)
+
+        wrapper = ttk.Frame(dialog)
+        wrapper.pack(fill="both", expand=True, padx=10, pady=(10, 4))
+
+        seen: set[str] = set()
+        dup_raw: set[str] = set()
+        invalid_gtin = 0
+        gtin_counts: dict[str, int] = {}
+        for mc in codes:
+            raw_str = full_code_str(mc)
+            if raw_str in seen:
+                dup_raw.add(raw_str)
+            else:
+                seen.add(raw_str)
+            if not gtin_check_digit_is_valid(mc.gtin):
+                invalid_gtin += 1
+            gtin_counts[mc.gtin] = gtin_counts.get(mc.gtin, 0) + 1
+        summary_text = (
+            f"Кодов: {len(codes)}"
+            f"  ·  уникальных: {len(seen)}"
+            f"  ·  ошибок GTIN: {invalid_gtin}"
+            f"  ·  дублей: {len(dup_raw)}"
+        )
+        ttk.Label(wrapper, text=summary_text, style="TLabel").pack(fill="x", pady=(0, 6))
+
+        canvas = tk.Canvas(wrapper, highlightthickness=0, bg=dlgbg, borderwidth=0)
+        scrollbar = ttk.Scrollbar(wrapper, orient="vertical", command=canvas.yview)
+        list_frame = ttk.Frame(canvas, style="TFrame")
+        list_window = canvas.create_window((0, 0), window=list_frame, anchor="nw")
+
+        list_frame.bind(
+            "<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        def copy_single(mc: MarkingCode) -> None:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(display_mc(mc))
+            self.status_var.set("Код скопирован")
+
+        for mc in codes:
+            row = ttk.Frame(list_frame, style="TFrame")
+            row.pack(fill="x", pady=1)
+
+            raw_str = full_code_str(mc)
+            is_valid = gtin_check_digit_is_valid(mc.gtin)
+            is_dup = raw_str in dup_raw
+            gtin_qty = gtin_counts.get(mc.gtin, 0)
+
+            dot_color = "#2CA847" if is_valid else "#d33"
+            dot = tk.Canvas(row, width=12, height=12, bg=dlgbg, highlightthickness=0, bd=0)
+            dot.create_oval(2, 2, 11, 11, fill=dot_color, outline="")
+            dot.pack(side="left", padx=(0, 6))
+
+            code_label = tk.Label(
+                row, text=display_mc(mc), font=("Consolas", 10),
+                bg=dlgbg, fg=fg, anchor="w",
+            )
+            code_label.pack(side="left", fill="x", expand=True)
+
+            tk.Label(row, text=f"× {gtin_qty}", font=("Segoe UI", 9),
+                     bg=dlgbg, fg="#888888", anchor="e").pack(side="left", padx=(6, 0))
+
+            status_text = "Ошибка GTIN" if not is_valid else ("Дубль" if is_dup else "OK")
+            status_color = ("#b8860b" if is_dup else ("#d33" if not is_valid else "#2CA847"))
+            tk.Label(row, text=status_text, font=("Segoe UI", 9),
+                     bg=dlgbg, fg=status_color, anchor="e").pack(side="left", padx=(8, 0))
+            ttk.Button(
+                row, text="Копировать", command=lambda m=mc: copy_single(m)
+            ).pack(side="right", padx=(10, 0))
+
+        buttons = ttk.Frame(dialog)
+        buttons.pack(fill="x", padx=10, pady=10)
+
+        def copy_all() -> None:
+            data = "\n".join(display_mc(mc) for mc in codes)
+            self.root.clipboard_clear()
+            self.root.clipboard_append(data)
+            self.status_var.set("Все коды скопированы")
+            messagebox.showinfo("Готово", "Все коды скопированы в буфер обмена")
+
+        ttk.Button(buttons, text="Скопировать все", command=copy_all).pack(side="left")
+        ttk.Button(buttons, text="Закрыть", command=dialog.destroy).pack(side="left", padx=(8, 0))
+        dialog.after(10, lambda: dialog.lift())
+
+    def _update_output_controls(self) -> None:
+        merge_csv = self.merge_csv_var.get()
+        if merge_csv and not self.combined_output_var.get().strip():
+            source_text = self.source_var.get().strip()
+            if source_text:
+                source = Path(source_text).expanduser()
+                if source.exists():
+                    self.combined_output_var.set(str(default_combined_output_path(source)))
+
+        enabled = not self.running and merge_csv
+        state = "normal" if enabled else "disabled"
+        self.output_entry.configure(state=state)
+        self.select_output_button.configure(state=state)
+
+    def _start(self) -> None:
+        if self.running:
+            return
+
+        source_text = self.source_var.get().strip()
+        output_text = self.combined_output_var.get().strip()
+        merge_csv = self.merge_csv_var.get()
+        escape_mode = self.escape_mode_var.get()
+        if not source_text:
+            messagebox.showerror("Ошибка", "Не выбран PDF-файл или папка")
+            return
+
+        source = Path(source_text).expanduser()
+        if not self._multi_source_files and not source.exists():
+            messagebox.showerror("Ошибка", f"Источник не найден:\n{source}")
+            return
+
+        combined_output_path: Path | None = None
+        if merge_csv:
+            if not output_text:
+                messagebox.showerror("Ошибка", "Не указан путь к общему CSV-файлу")
+                return
+            combined_output_path = Path(output_text).expanduser()
+            if combined_output_path.suffix.lower() != ".csv":
+                messagebox.showerror("Ошибка", "Путь к общему файлу должен иметь расширение .csv")
+                return
+            if combined_output_path.exists():
+                if not combined_output_path.is_file():
+                    messagebox.showerror("Ошибка", f"Путь к общему CSV не является файлом:\n{combined_output_path}")
+                    return
+                if not messagebox.askyesno(
+                    "Перезапись CSV",
+                    f"Файл уже существует:\n{combined_output_path}\n\nПерезаписать его?",
+                ):
+                    return
+            try:
+                combined_output_path.parent.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                messagebox.showerror("Ошибка", f"Не удалось создать папку для общего CSV:\n{exc}")
+                return
+
+        self._clear_log()
+        self.cancel_event.clear()
+        self.running = True
+        self._set_controls_running(True)
+        self.progress.configure(value=0, maximum=1)
+        self.status_var.set("Поиск PDF-файлов...")
+
+        if self._multi_source_files:
+            source_files = list(self._multi_source_files)
+        else:
+            source_files = find_pdf_files(source)
+
+        self.worker = threading.Thread(
+            target=self._run_batch,
+            args=(
+                source,
+                source_files,
+                combined_output_path.resolve() if combined_output_path is not None else None,
+                escape_mode,
+            ),
+            daemon=True,
+        )
+        self.worker.start()
+
+    def _run_batch(self, source: Path, source_files: list[Path],
+                   combined_output_path: Path | None, escape_mode: str) -> None:
+        pdf_files = source_files
+        if not pdf_files:
+            self.events.put(("log", f"PDF-файлы не найдены: {source}\n"))
+            self.events.put(("done", (0, 0, False)))
+            return
+
+        jobs = allocate_output_paths(pdf_files)
+        self.events.put(("maximum", len(jobs)))
+        self.events.put(("log", f"Найдено PDF-файлов: {len(jobs)}\n"))
+        if combined_output_path is None:
+            self.events.put(("log", "CSV сохраняются рядом с исходными PDF.\n\n"))
+        else:
+            self.events.put(("log", f"Общий CSV: {combined_output_path}\n\n"))
+        mode_names = {
+            "gs": "Разделитель GS: символ GS (обычный)",
+            "1c": "Разделитель GS: для 1С (замена на \\x1d)",
+            "ozon": "Разделитель GS: для OZON (замена на \\u001d)",
+        }
+        self.events.put(("log", mode_names.get(escape_mode, "Разделитель GS") + "\n\n"))
+        self.events.put(("log", "Вывод: полный код маркировки\n\n"))
+
+        succeeded = 0
+        failed = 0
+        cancelled = False
+        combined_codes: list[MarkingCode] = []
+        all_codes: list[MarkingCode] = []
+
+        for index, (pdf_path, csv_path) in enumerate(jobs, start=1):
+            if self.cancel_event.is_set():
+                cancelled = True
+                break
+
+            self.events.put(
+                (
+                    "log",
+                    f"{'=' * 72}\n[{index}/{len(jobs)}] {pdf_path}\n"
+                    + (f"CSV: {csv_path.name}\n" if combined_output_path is None else ""),
+                )
+            )
+            self.events.put(("status", f"Файл {index} из {len(jobs)}"))
+
+            def page_progress(current_page: int, total_pages: int,
+                              file_index: int = index, total_files: int = len(jobs)) -> None:
+                self.events.put(
+                    ("status", f"Файл {file_index}/{total_files}, страница {current_page}/{total_pages}")
+                )
+
+            try:
+                decoded = decode_pdf(
+                    pdf_path,
+                    log=lambda message: self.events.put(("log", message)),
+                    page_progress=page_progress,
+                    cancel_event=self.cancel_event,
+                )
+                all_codes.extend(decoded.codes)
+                if combined_output_path is None:
+                    write_codes_csv(
+                        csv_path, list(decoded.codes),
+                        escape_csv=False, escape_mode=escape_mode,
+                    )
+                else:
+                    combined_codes.extend(decoded.codes)
+                self.events.put(
+                    (
+                        "log",
+                        f"Decoded: {decoded.code_count}\n"
+                        f"Unique codes: {decoded.unique_code_count}\n"
+                        f"GTIN counts: {decoded.gtins}\n",
+                    )
+                )
+            except ConversionCancelled:
+                cancelled = True
+                self.events.put(("log", "\nКонвертация остановлена пользователем.\n"))
+                break
+            except ConversionError as exc:
+                failed += 1
+                self.events.put(("log", f"ERROR: {exc}\nРезультат: ошибка\n\n"))
+            except Exception as exc:
+                failed += 1
+                self.events.put(("log", f"UNEXPECTED ERROR: {exc}\nРезультат: ошибка\n\n"))
+            else:
+                succeeded += 1
+                self.events.put(("log", "Результат: успешно\n\n"))
+                if combined_output_path is None:
+                    self.last_output_dir = str(csv_path.parent)
+
+            self.events.put(("progress", index))
+
+        if combined_output_path is not None and not cancelled and succeeded:
+            try:
+                write_codes_csv(
+                    combined_output_path, combined_codes,
+                    escape_csv=False, escape_mode=escape_mode,
+                )
+            except Exception as exc:
+                failed += succeeded
+                succeeded = 0
+                self.events.put(("log", f"ERROR: не удалось записать общий CSV: {exc}\nРезультат: ошибка\n"))
+            else:
+                self.last_output_dir = str(combined_output_path.parent)
+                self.events.put(
+                    ("log", f"Общий CSV записан: {combined_output_path}\nВсего кодов: {len(combined_codes)}\n")
+                )
+        elif combined_output_path is not None and cancelled:
+            self.events.put(("log", "Общий CSV не записан из-за остановки.\n"))
+
+        self._last_codes = all_codes
+        self.events.put(("done", (succeeded, failed, cancelled)))
+
+    def _stop(self) -> None:
+        if not self.running:
+            return
+        self.cancel_event.set()
+        self.status_var.set("Остановка...")
+        self.stop_button.configure(state="disabled")
+
+    def _drain_events(self) -> None:
+        try:
+            while True:
+                event_type, payload = self.events.get_nowait()
+                if event_type == "log":
+                    self._append_log(str(payload))
+                elif event_type == "maximum":
+                    self.progress.configure(maximum=int(payload), value=0)
+                elif event_type == "progress":
+                    self.progress.configure(value=int(payload))
+                elif event_type == "status":
+                    self.status_var.set(str(payload))
+                elif event_type == "done":
+                    succeeded, failed, cancelled = payload  # type: ignore[misc]
+                    self._finish(int(succeeded), int(failed), bool(cancelled))
+        except queue.Empty:
+            pass
+
+        self.root.after(100, self._drain_events)
+
+    def _finish(self, succeeded: int, failed: int, cancelled: bool) -> None:
+        self.running = False
+        self._set_controls_running(False)
+        if cancelled:
+            status = f"Остановлено. Успешно: {succeeded}, ошибок: {failed}"
+        else:
+            status = f"Готово. Успешно: {succeeded}, ошибок: {failed}"
+        self.status_var.set(status)
+        self._append_log(f"\n{status}\n")
+
+    def _set_controls_running(self, running: bool) -> None:
+        normal_state = "disabled" if running else "normal"
+        for widget in (
+            self.source_entry,
+            self.select_file_button,
+            self.select_folder_button,
+            self.merge_csv_check,
+            self.escape_gs_radio,
+            self.escape_1c_radio,
+            self.escape_ozon_radio,
+            self.start_button,
+            self.excel_button,
+        ):
+            widget.configure(state=normal_state)
+        self._update_output_controls()
+        self.stop_button.configure(state="normal" if running else "disabled")
+
+    def _append_log(self, text: str) -> None:
+        self.log.configure(state="normal")
+        self.log.insert("end", text)
+        self.log.see("end")
+        self.log.configure(state="disabled")
+
+    def _clear_log(self) -> None:
+        self.log.configure(state="normal")
+        self.log.delete("1.0", "end")
+        self.log.configure(state="disabled")
+
+    def _load_config(self) -> None:
+        cfg = config_path()
+        try:
+            with open(cfg, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            return
+        if not isinstance(data, dict):
+            return
+
+        saved_last_dir = data.get("last_output_dir")
+        if isinstance(saved_last_dir, str) and saved_last_dir:
+            self.last_output_dir = saved_last_dir
+        try:
+            self.dark_var.set(bool(data.get("dark_mode", False)))
+        except Exception:
+            pass
+        try:
+            saved_mode = data.get("escape_mode")
+            if isinstance(saved_mode, str) and saved_mode in ("gs", "1c", "ozon"):
+                self.escape_mode_var.set(saved_mode)
+        except Exception:
+            pass
+        try:
+            self.merge_csv_var.set(bool(data.get("merge_csv", False)))
+        except Exception:
+            pass
+
+        # настройки вкладки CSV -> DataMatrix
+        try:
+            if isinstance(data.get("dm_label_size"), str):
+                self.dm_label_size_var.set(data["dm_label_size"])
+        except Exception:
+            pass
+        try:
+            if isinstance(data.get("dm_group"), str):
+                self.dm_group_var.set(data["dm_group"])
+        except Exception:
+            pass
+        for key, attr in (
+            ("dm_show_date", "dm_show_date_var"),
+            ("dm_show_batch", "dm_show_batch_var"),
+            ("dm_show_code", "dm_show_code_var"),
+            ("dm_show_short", "dm_show_short_var"),
+        ):
+            try:
+                if key in data:
+                    getattr(self, attr).set(bool(data[key]))
+            except Exception:
+                pass
+
+    def _save_config(self) -> None:
+        cfg = config_path()
+        data = {
+            "last_output_dir": self.last_output_dir or "",
+            "dark_mode": bool(self.dark_var.get()),
+            "escape_mode": self.escape_mode_var.get(),
+            "merge_csv": bool(self.merge_csv_var.get()),
+            "dm_label_size": self.dm_label_size_var.get(),
+            "dm_group": self.dm_group_var.get(),
+            "dm_show_date": bool(self.dm_show_date_var.get()),
+            "dm_show_batch": bool(self.dm_show_batch_var.get()),
+            "dm_show_code": bool(self.dm_show_code_var.get()),
+            "dm_show_short": bool(self.dm_show_short_var.get()),
+        }
+        try:
+            with open(cfg, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+
+    def _on_close(self) -> None:
+        if self.running and not messagebox.askyesno(
+            "Выход", "Конвертация выполняется. Остановить её и закрыть программу?"
+        ):
+            return
+        self._save_config()
+        self.cancel_event.set()
+        self.root.destroy()
+
+
+def run_gui() -> None:
+    try:
+        from tkinterdnd2 import TkinterDnD
+
+        root = TkinterDnD.Tk()
+    except Exception:
+        root = tk.Tk()
+    app = ConverterGui(root)
+    root.mainloop()
