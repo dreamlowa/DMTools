@@ -472,18 +472,22 @@ def find_zint_exe() -> Path | None:
 
 def parse_csv_codes(csv_text: str) -> list[str]:
     """Extract full marking codes from CSV text: one code per non-empty line.
-    Strips surrounding quotes, and normalises GS separators to \\x1d."""
-    import csv as _csv
+    Comma is NOT treated as a separator (serial numbers may contain commas),
+    so each physical line is read as a whole. Strips surrounding quotes and
+    normalises GS separators to \\x1d."""
     import io
 
     lines = []
-    reader = _csv.reader(io.StringIO(csv_text))
-    for row in reader:
-        if row:
-            cell = row[0].strip()
-            if cell:
-                cell = cell.replace("\x1d", GS_CHAR).replace("\\x1d", GS_CHAR).replace("è", GS_CHAR)
-                lines.append(cell)
+    for raw in io.StringIO(csv_text):
+        cell = raw.rstrip("\r\n").strip()
+        if not cell:
+            continue
+        # убираем обрамляющие кавычки, если есть
+        if len(cell) >= 2 and cell[0] == '"' and cell[-1] == '"':
+            cell = cell[1:-1]
+        cell = cell.replace("\x1d", GS_CHAR).replace("\\x1d", GS_CHAR)
+        if cell:
+            lines.append(cell)
     return lines
 
 
@@ -573,6 +577,71 @@ def gs1data_to_zint_from_short(short_code: str) -> str:
     return f"[01]{gtin}[21]{serial}"
 
 
+def validate_code_structure(code: str) -> list[str]:
+    """Проверяет структуру одного кода маркировки.
+    Возвращает список найденных проблем (пустой — код корректен).
+    Проверки: GTIN (14 цифр + контрольная), серия (AI 21), криптохвост
+    (блоки 91 и 92)."""
+    problems = []
+    text = code
+    if not text:
+        return ["пустой код"]
+
+    parts = text.split(GS_CHAR)
+    # блок 01+GTIN
+    gtin = ""
+    rest = text
+    if rest.startswith("01"):
+        gtin = rest[2:16]
+        rest = rest[16:]
+    if len(gtin) != 14 or not gtin.isdigit():
+        problems.append(f"GTIN должен быть 14 цифр, получено {len(gtin)}: {gtin!r}")
+    elif not gtin_check_digit_is_valid(gtin):
+        problems.append(f"неверная контрольная цифра GTIN: {gtin}")
+
+    # серия (AI 21)
+    if rest.startswith("21"):
+        serial = rest[2:]
+        if GS_CHAR in serial:
+            serial = serial.split(GS_CHAR, 1)[0]
+        if not serial:
+            problems.append("пустой серийный номер (AI 21)")
+        elif len(serial) > 20:
+            problems.append(f"серийный номер слишком длинный: {len(serial)} симв. (макс. 20)")
+    else:
+        problems.append("нет серийного номера (AI 21)")
+
+    # криптохвост: блоки 91 и 92
+    block_texts = [p for p in parts if p.startswith(("91", "92"))]
+    has91 = any(p.startswith("91") for p in block_texts)
+    has92 = any(p.startswith("92") for p in block_texts)
+    if not has91:
+        problems.append("нет криптоключа (AI 91)")
+    if not has92:
+        problems.append("нет цифровой подписи (AI 92)")
+    return problems
+
+
+def validate_codes(codes: list[str]) -> list[dict]:
+    """Проверяет список кодов маркировки и возвращает подробности по каждому.
+    Каждый элемент: {"index", "code", "problems", "is_duplicate"}."""
+    result = []
+    seen: set[str] = set()
+    for pos, code in enumerate(codes, 1):
+        problems = validate_code_structure(code)
+        dup = code in seen
+        seen.add(code)
+        if dup:
+            problems.insert(0, "дубликат кода")
+        result.append({
+            "index": pos,
+            "code": code,
+            "problems": problems,
+            "is_duplicate": dup,
+        })
+    return result
+
+
 MM_PT = 72.0 / 25.4  # миллиметров в пунктах PDF
 
 
@@ -592,6 +661,14 @@ def build_label_page(
     show_code: bool = True,
     use_short: bool = False,
     scale: int = 4,
+    bold_name: bool = False,
+    bold_date: bool = False,
+    bold_batch: bool = False,
+    bold_code: bool = False,
+    size_name: float | None = None,
+    size_date: float | None = None,
+    size_batch: float | None = None,
+    size_code: float | None = None,
 ) -> None:
     """Рендерит одну этикетку нужного размера с DataMatrix по центру.
 
@@ -607,8 +684,21 @@ def build_label_page(
     w_pt = label_w_mm * MM_PT
     h_pt = label_h_mm * MM_PT
 
+    # пунктирная обводка границы этикетки (видно края наклейки при печати)
+    try:
+        page.draw_rect(
+            pymupdf.Rect(0.2, 0.2, w_pt - 0.2, h_pt - 0.2),
+            color=(0.6, 0.6, 0.6),
+            width=0.4,
+            dashes="[2 2] 0",
+            fill=None,
+        )
+    except Exception:
+        pass
+
     # встроенный шрифт с поддержкой кириллицы
     fontfile = ""
+    arialbd = ""
     for candidate in (
         r"C:/Windows/Fonts/arial.ttf",
         r"C:/Windows/Fonts/times.ttf",
@@ -616,11 +706,21 @@ def build_label_page(
         if os.path.exists(candidate):
             fontfile = candidate
             break
+    if os.path.exists(r"C:/Windows/Fonts/arialbd.ttf"):
+        arialbd = r"C:/Windows/Fonts/arialbd.ttf"
     if fontfile:
         page.insert_font(fontname="F0", fontfile=fontfile)
         use_font = "F0"
     else:
         use_font = "helv"
+    bold_font = "F1"
+    try:
+        if arialbd:
+            page.insert_font(fontname=bold_font, fontfile=arialbd)
+        else:
+            bold_font = use_font
+    except Exception:
+        bold_font = use_font
 
     if use_short:
         zint_data = gs1data_to_zint_from_short(code_identification(full_code))
@@ -669,48 +769,161 @@ def build_label_page(
             ] or [code_text]
             bottom_lines.extend(wrapped)
 
-        # DataMatrix — в верхней части этикетки (крупный), текст под ним.
-        # Код опущен ниже от верхнего края, чтобы при смещении листа в принтере
-        # не смазаться по краю и остаться на этикетке.
-        code_top = top_margin + 24
-        text_h = len(bottom_lines) * 11 + 8
-        avail_h = (h_pt - 10) - code_top - text_h
-        if avail_h < 8:
-            avail_h = 8
-        avail_w = w_pt - 16
-        code_h = min(int(avail_h), int(avail_w / aspect))
-        code_w = int(code_h * aspect)
+        # DataMatrix — сверху, крупный; текст (наименование, дата, партия) — ПОД кодом.
+        import pymupdf as _mu
+        # для точного измерения используем тот же шрифт, что и для печати (F0-Arial)
+        _metric = _mu.Font(fontfile=fontfile) if fontfile else None
 
-        code_left = (w_pt - code_w) / 2
-        page.insert_image(
-            pymupdf.Rect(code_left, code_top, code_left + code_w, code_top + code_h),
-            filename=str(png_path),
-        )
+        def _tw(text, fs):
+            if _metric is not None:
+                return _metric.text_length(text, fontsize=fs)
+            return _mu.get_text_length(text, fontname='helv', fontsize=fs)
 
-        # текст под штрихкодом — по центру этикетки
-        y = code_top + code_h + 6
-        for line in bottom_lines:
-            fontsize = 7 if len(line) > 30 else 8
-            line_h = fontsize + 4
-            page.insert_textbox(
-                pymupdf.Rect(8, y, w_pt - 8, y + line_h),
-                line,
-                fontsize=fontsize,
-                fontname=use_font,
-                align=1,
+        margin = 4  # отступ по краям этикетки, pt
+        box_w = max(w_pt - 2 * margin, 8)
+
+        # 1) определяем текстовую подпись кода (дублирует сам штрихкод — её можно
+        #    отбросить первой при нехватке места; сам DataMatrix рисуем ВСЕГДА)
+        code_text_lines: list[str] = []
+        if show_code:
+            code_text = (code_identification(full_code) if use_short else full_code).replace(GS_CHAR, "\u29f8")
+            code_text_lines = [code_text[i:i + max_chars] for i in range(0, len(code_text), max_chars)] or [code_text]
+
+        # остальной текст: дата, партия, наименование
+        other_lines: list[str] = [ln for ln in bottom_lines if ln not in code_text_lines]
+
+        # группа строк по типу (для порядка снизу вверх и приоритета отбрасывания)
+        name_lines: list[str] = []
+        date_lines: list[str] = []
+        batch_lines: list[str] = []
+        for ln in other_lines:
+            if ln.startswith("Дата производства:"):
+                date_lines.append(ln)
+            elif ln.startswith("Партия:"):
+                batch_lines.append(ln)
+            elif ln.strip():
+                name_lines.append(ln)
+        # подпись кода всегда в самом низу (выкидывается первой при нехватке места)
+        if show_code:
+            code_with_sub = code_text_lines
+        else:
+            code_with_sub = []
+
+        # ЕДИНЫЙ шрифт для даты/партии/наименования. Если задан ручной размер
+        # (size_date и т.п.) — используем его; иначе автоподбор, чтобы дата и
+        # партия влезали в ширину без переноса (минимум 3pt).
+        def _pick(manual, strings):
+            if manual and manual >= 2:
+                return float(manual)
+            fs = 6.5
+            while fs > 3 and strings and any(_tw(s, fs) > box_w for s in strings):
+                fs -= 0.5
+            return fs
+
+        info_fs_date = _pick(size_date, date_lines)
+        info_fs_batch = _pick(size_batch, batch_lines)
+        # если размеры заданы порознь и они различаются — это ок;
+        # если нет — стараемся сделать общий размер для даты и партии
+        if size_date is None and size_batch is None:
+            info_fs = min(info_fs_date, info_fs_batch)
+            info_fs_date = info_fs_batch = info_fs
+        name_fs = _pick(size_name, name_lines)
+        code_fs = _pick(size_code, code_with_sub)
+
+        def _wrap(text: str, ffs: float) -> list[tuple[str, float]]:
+            if _tw(text, ffs) > box_w:
+                chunks = []
+                cur = ""
+                for ch in text:
+                    trial = cur + ch
+                    if _tw(trial, ffs) > box_w and cur:
+                        chunks.append(cur)
+                        cur = ch
+                    else:
+                        cur = trial
+                if cur:
+                    chunks.append(cur)
+                return [(c, ffs) for c in chunks]
+            return [(text, ffs)]
+
+        # дата и партия — одна строка (без переноса) с общим шрифтом
+        date_rows: list[tuple[str, float, str]] = [(t, info_fs_date, bold_font if bold_date else use_font) for t in date_lines]
+        batch_rows: list[tuple[str, float, str]] = [(t, info_fs_batch, bold_font if bold_batch else use_font) for t in batch_lines]
+        # наименование — тот же шрифт, но может переноситься на несколько строк
+        name_rows: list[tuple[str, float, str]] = [(c, fs, bold_font if bold_name else use_font) for c, fs in [r for t in name_lines for r in _wrap(t, name_fs)]]
+        # подпись кода — может переноситься
+        code_rows: list[tuple[str, float, str]] = [(c, fs, bold_font if bold_code else use_font) for c, fs in [r for t in code_with_sub for r in _wrap(t, code_fs)]]
+
+        line_h = 10  # межстрочный интервал между базовыми линиями (компактнее 12)
+        margin = 4
+        bottom_limit = h_pt - margin
+        # Зазор между низом DataMatrix и первой строкой текста. Должен быть
+        # заметно больше высоты надстрочной части шрифта (примерно 0.8*fs),
+        # иначе верхние выносные буквы («Д» в «Дата», «П» в «Партия») визуально
+        # наезжают на нижние ряды кода. Для fs вплоть до 8pt достаточно 8pt.
+        gap_code_text = 8
+        avail_w = w_pt - 2 * margin
+        code_top = margin
+
+        mandatory_date = date_rows  # всегда
+        mandatory_batch = batch_rows  # всегда
+        optional_name = name_rows
+        optional_code = code_rows
+
+        # сколько ещё строк поместится поверх даты и партии
+        block_mand = len(mandatory_date) + len(mandatory_batch)
+        min_code_est = 18
+        max_est_lines = max(int((bottom_limit - margin - min_code_est - gap_code_text) // line_h), 1)
+        extra_slots = max_est_lines - block_mand
+
+        # строим итоговый список сверху вниз: наименование, дата, партия, подпись кода
+        top_extra: list[tuple[str, float, str]] = []
+        bottom_extra: list[tuple[str, float, str]] = []
+        for item in optional_name:
+            if len(top_extra) + len(bottom_extra) < extra_slots:
+                top_extra.append(item)
+        for item in optional_code:
+            if len(top_extra) + len(bottom_extra) < extra_slots:
+                bottom_extra.append(item)
+
+        # итоговый порядок сверху вниз: наименование, дата, партия, подпись кода
+        selected: list[tuple[str, float, str]] = top_extra + mandatory_date + mandatory_batch + bottom_extra
+
+        # позиции базовых линий снизу вверх
+        baseline_list: list[float] = []
+        cur_y = bottom_limit
+        for _ in range(len(selected)):
+            baseline_list.append(cur_y - 3)
+            cur_y -= line_h
+        baseline_list.reverse()
+
+        # код занимает всё свободное место от верха до начала текста
+        first_text_top = baseline_list[0] if baseline_list else bottom_limit
+        code_bottom = first_text_top - gap_code_text
+        code_h = int(code_bottom - code_top)
+        code_by_w = int(avail_w / aspect) if avail_w > 0 else code_h
+        code_h = min(code_h, code_by_w)
+        # Гарантия: низ изображения кода НИКОГДА не выходит за слот кода
+        # (не пересекает текст). Даже если ограничение по ширине (code_by_w)
+        # уменьшило высоту, низ кода остаётся выше первой строки текста.
+        max_code_h = int(code_bottom - code_top)
+        code_h = min(code_h, max_code_h)
+        code_h = max(code_h, 0)
+        code_w = max(int(code_h * aspect), 1)
+        if code_h >= 6 and code_w >= 6:
+            code_left = (w_pt - code_w) / 2
+            page.insert_image(
+                pymupdf.Rect(code_left, code_top, code_left + code_w, code_top + code_h),
+                filename=str(png_path),
             )
-            y += line_h
+        else:
+            code_h = 0
 
-        # подпись номера этикетки — в самом низу этикетки
-        try:
+        for ((chnk, ffs, fname), bl) in zip(selected, baseline_list):
+            cw = _tw(chnk, ffs)
             page.insert_text(
-                (6, h_pt - 3),
-                f"Этикетка {idx + 1}",
-                fontsize=6,
-                fontname=use_font,
+                ((w_pt - cw) / 2, bl), chnk, fontsize=ffs, fontname=fname,
             )
-        except Exception:
-            pass
 
 
 def generate_label_pdf(
@@ -727,22 +940,34 @@ def generate_label_pdf(
     show_code: bool = True,
     use_short: bool = False,
     scale: int = 4,
-) -> tuple[int, str]:
+    bold_name: bool = False,
+    bold_date: bool = False,
+    bold_batch: bool = False,
+    bold_code: bool = False,
+    size_name: float | None = None,
+    size_date: float | None = None,
+    size_batch: float | None = None,
+    size_code: float | None = None,
+    progress_cb=None,
+) -> tuple[int, str, Path]:
     """Генерирует PDF-этикетки с DataMatrix настраиваемого размера.
 
-    Каждая этикетка — отдельная страница. Возвращает (page_count, error).
+    Каждая этикетка — отдельная страница. Возвращает (page_count, error, save_path),
+    где save_path — реальный путь, по которому был сохранён файл (учитывает
+    механизм копий с номером вместо перезаписи).
     use_short=True — из полного кода строится укороченный (код идентификации,
     без криптохвоста 91/92), для перемаркировки.
+    progress_cb(done, total) — вызывается после каждой этикетки для прогресс-бара.
     """
     import tempfile
 
     codes = parse_csv_codes(csv_text)
     if not codes:
-        return 0, "Не найдено ни одного кода в CSV-файле"
+        return 0, "Не найдено ни одного кода в CSV-файле", output_pdf
 
     zint_exe = find_zint_exe()
     if zint_exe is None:
-        return 0, "Не найден zint.exe. Поместите его рядом с программой."
+        return 0, "Не найден zint.exe. Поместите его рядом с программой.", output_pdf
 
     import pymupdf
 
@@ -767,33 +992,59 @@ def generate_label_pdf(
                     show_code=show_code,
                     use_short=use_short,
                     scale=scale,
+                    bold_name=bold_name,
+                    bold_date=bold_date,
+                    bold_batch=bold_batch,
+                    bold_code=bold_code,
+                    size_name=size_name,
+                    size_date=size_date,
+                    size_batch=size_batch,
+                    size_code=size_code,
                 )
                 ok_count += 1
+                if progress_cb:
+                    progress_cb(ok_count, len(codes))
             except Exception as exc:
                 # build_label_page успела создать пустую страницу — удаляем её
                 if len(doc) > ok_count:
                     doc.delete_page(ok_count)
                 skipped.append(f"код {idx + 1}: {exc}")
+                if progress_cb:
+                    progress_cb(idx + 1, len(codes))
     except Exception as exc:
-        return 0, f"Ошибка: {exc}"
+        return 0, f"Ошибка: {exc}", output_pdf
 
     page_count = ok_count
     if page_count == 0:
         if skipped:
             detail = "\n".join(skipped)
             return 0, (f"Не удалось сгенерировать ни одной этикетки "
-                       f"({len(skipped)} из {len(codes)} кодов пропущено):\n{detail}")
-        return 0, "Не удалось сгенерировать ни одной этикетки"
+                       f"({len(skipped)} из {len(codes)} кодов пропущено):\n{detail}"), output_pdf
+        return 0, "Не удалось сгенерировать ни одной этикетки", output_pdf
 
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
-    doc.save(str(output_pdf))
+    # Если файл с таким именем уже существует — создаём копию с номером
+    # по порядку (имя_1.pdf, имя_2.pdf, ...), не перезаписывая старый.
+    save_path = output_pdf
+    n = 1
+    while save_path.exists():
+        save_path = output_pdf.with_stem(f"{output_pdf.stem}_{n}")
+        n += 1
+    save_note = ""
+    if save_path != output_pdf:
+        save_note = f"\nФайл уже существовал. Сохранено как: {save_path.name}"
+
+    try:
+        doc.save(str(save_path))
+    except Exception as exc:
+        return 0, f"Не удалось сохранить PDF: {exc}", output_pdf
 
     if skipped:
         detail = "\n".join(skipped)
         warning = (f"{len(skipped)} из {len(codes)} кодов пропущено "
-                   f"(ошибочный формат):\n{detail}")
-        return page_count, warning
-    return page_count, ""
+                   f"(ошибочный формат):\n{detail}{save_note}")
+        return page_count, warning, save_path
+    return page_count, save_note, save_path
 
 
 def generate_codes_pdf(
@@ -871,6 +1122,14 @@ def export_labels_png(
     show_code: bool = True,
     use_short: bool = False,
     dpi: int = 300,
+    bold_name: bool = False,
+    bold_date: bool = False,
+    bold_batch: bool = False,
+    bold_code: bool = False,
+    size_name: float | None = None,
+    size_date: float | None = None,
+    size_batch: float | None = None,
+    size_code: float | None = None,
 ) -> tuple[int, str]:
     """Экспортирует каждую этикетку как отдельный PNG-файл.
 
@@ -880,7 +1139,14 @@ def export_labels_png(
     from PIL import Image
 
     tmp_pdf = output_dir / "__delfin_tmp.pdf"
-    pages, err = generate_label_pdf(
+    # Удаляем устаревший временный PDF, чтобы generate_label_pdf сохранил
+    # файл ровно под этим именем (без суффикса _1, _2) и вернул его в save_path.
+    try:
+        if tmp_pdf.exists():
+            tmp_pdf.unlink()
+    except OSError:
+        pass
+    pages, err, save_path = generate_label_pdf(
         csv_text,
         tmp_pdf,
         label_w_mm=label_w_mm,
@@ -893,6 +1159,14 @@ def export_labels_png(
         show_code=show_code,
         use_short=use_short,
         scale=6,
+        bold_name=bold_name,
+        bold_date=bold_date,
+        bold_batch=bold_batch,
+        bold_code=bold_code,
+        size_name=size_name,
+        size_date=size_date,
+        size_batch=size_batch,
+        size_code=size_code,
     )
     if err and pages == 0:
         return 0, err
@@ -900,7 +1174,9 @@ def export_labels_png(
     import pymupdf
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    doc = pymupdf.open(str(tmp_pdf))
+    # открываем именно тот файл, который реально создан (мог быть суффикс _1, _2)
+    rendered_pdf = save_path if save_path is not None and save_path.exists() else tmp_pdf
+    doc = pymupdf.open(str(rendered_pdf))
     saved = 0
     try:
         for i in range(len(doc)):
@@ -911,10 +1187,13 @@ def export_labels_png(
             saved += 1
     finally:
         doc.close()
-        try:
-            tmp_pdf.unlink()
-        except OSError:
-            pass
+        # удаляем и временный PDF (если сохранялся под исходным именем),
+        # и возможную копию с номером (save_path вроде __delfin_tmp_1.pdf)
+        for candidate in {tmp_pdf, rendered_pdf}:
+            try:
+                candidate.unlink()
+            except OSError:
+                pass
     return saved, ""
 
 

@@ -21,9 +21,30 @@ from converter import (
     generate_label_pdf,
     gtin_check_digit_is_valid,
     print_pdf_windows,
+    validate_codes,
     write_codes_csv,
     write_codes_xlsx,
 )
+
+
+def _safe_startfile(path: str) -> None:
+    """Безопасно открывает файл/папку системным обработчиком."""
+    try:
+        os.startfile(path)  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+
+def _float_or_none(s: str):
+    """Преобразует строку в число или None, если пусто/не число."""
+    s = (s or "").strip().replace(",", ".")
+    if not s:
+        return None
+    try:
+        v = float(s)
+    except ValueError:
+        return None
+    return v if v >= 2 else None
 
 
 def find_pdf_files(source: Path) -> list[Path]:
@@ -78,6 +99,15 @@ def config_path() -> Path:
     return base / "PDFDataMatrixToCSV_config.json"
 
 
+def log_file_path() -> Path:
+    """Файл журнала операций — рядом с конфигом."""
+    if getattr(sys, "frozen", False):
+        base = Path(sys.executable).resolve().parent
+    else:
+        base = Path(__file__).resolve().parent
+    return base / "PDFDataMatrixToCSV_log.txt"
+
+
 def _split_drop_paths(data: str) -> list[str]:
     import re
 
@@ -93,8 +123,9 @@ class ConverterGui:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("GS1 DataMatrix: PDF в CSV")
-        self.root.geometry("1180x720")
-        self.root.minsize(960, 600)
+        self.root.geometry("1440x820")
+        self.root.minsize(1240, 680)
+        self.root.maxsize(2000, 1200)
         self._set_window_icon()
 
         self.source_var = tk.StringVar()
@@ -125,6 +156,18 @@ class ConverterGui:
         self.dm_date_var = tk.StringVar()
         self.dm_batch_var = tk.StringVar()
         self.dm_name_var = tk.StringVar()
+        self.dm_bold_name_var = tk.BooleanVar(value=False)
+        self.dm_bold_date_var = tk.BooleanVar(value=False)
+        self.dm_bold_batch_var = tk.BooleanVar(value=False)
+        self.dm_bold_code_var = tk.BooleanVar(value=False)
+        self.dm_size_name_var = tk.StringVar(value="")
+        self.dm_size_date_var = tk.StringVar(value="")
+        self.dm_size_batch_var = tk.StringVar(value="")
+        self.dm_size_code_var = tk.StringVar(value="")
+        self.dm_profile_name_var = tk.StringVar(value="")
+        self._profiles: dict[str, dict] = {}
+        self._last_generated_pdf: str | None = None
+        self._generating = False
 
         self._load_config()
         self._build_ui()
@@ -600,6 +643,15 @@ class ConverterGui:
         self.dm_date_entry = ttk.Entry(left, textvariable=self.dm_date_var)
         self.dm_date_entry.grid(row=3, column=1, sticky="ew", pady=(0, 8))
         self.dm_date_entry.bind("<KeyRelease>", self._on_date_format)
+        self.dm_bold_date_check = ttk.Checkbutton(
+            left, text="Жирн.", variable=self.dm_bold_date_var, command=self._on_show_change
+        )
+        self.dm_bold_date_check.grid(row=3, column=2, sticky="w", padx=(8, 0), pady=(0, 8))
+        self.dm_size_date_spin = ttk.Spinbox(
+            left, from_=2, to=20, increment=0.5, width=4,
+            textvariable=self.dm_size_date_var, command=self._on_show_change,
+        )
+        self.dm_size_date_spin.grid(row=3, column=3, sticky="w", padx=(4, 0), pady=(0, 8))
 
         ttk.Label(left, text="Партия:").grid(
             row=4, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
@@ -607,6 +659,15 @@ class ConverterGui:
         self.dm_batch_entry = ttk.Entry(left, textvariable=self.dm_batch_var)
         self.dm_batch_entry.grid(row=4, column=1, sticky="ew", pady=(0, 8))
         self.dm_batch_entry.bind("<KeyRelease>", self._on_preview_input_change)
+        self.dm_bold_batch_check = ttk.Checkbutton(
+            left, text="Жирн.", variable=self.dm_bold_batch_var, command=self._on_show_change
+        )
+        self.dm_bold_batch_check.grid(row=4, column=2, sticky="w", padx=(8, 0), pady=(0, 8))
+        self.dm_size_batch_spin = ttk.Spinbox(
+            left, from_=2, to=20, increment=0.5, width=4,
+            textvariable=self.dm_size_batch_var, command=self._on_show_change,
+        )
+        self.dm_size_batch_spin.grid(row=4, column=3, sticky="w", padx=(4, 0), pady=(0, 8))
 
         ttk.Label(left, text="Наименование:").grid(
             row=5, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
@@ -614,6 +675,15 @@ class ConverterGui:
         self.dm_name_entry = ttk.Entry(left, textvariable=self.dm_name_var)
         self.dm_name_entry.grid(row=5, column=1, sticky="ew", pady=(0, 8))
         self.dm_name_entry.bind("<KeyRelease>", self._on_preview_input_change)
+        self.dm_bold_name_check = ttk.Checkbutton(
+            left, text="Жирн.", variable=self.dm_bold_name_var, command=self._on_show_change
+        )
+        self.dm_bold_name_check.grid(row=5, column=2, sticky="w", padx=(8, 0), pady=(0, 8))
+        self.dm_size_name_spin = ttk.Spinbox(
+            left, from_=2, to=20, increment=0.5, width=4,
+            textvariable=self.dm_size_name_var, command=self._on_show_change,
+        )
+        self.dm_size_name_spin.grid(row=5, column=3, sticky="w", padx=(4, 0), pady=(0, 8))
 
         ttk.Label(left, text="Сохранить PDF:").grid(
             row=6, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
@@ -642,6 +712,15 @@ class ConverterGui:
             show_opts, text="Код маркировки", variable=self.dm_show_code_var, command=self._on_show_change
         )
         self.dm_show_code_check.grid(row=0, column=2, sticky="w")
+        self.dm_bold_code_check = ttk.Checkbutton(
+            show_opts, text="жирн.", variable=self.dm_bold_code_var, command=self._on_show_change
+        )
+        self.dm_bold_code_check.grid(row=0, column=3, sticky="w", padx=(4, 0))
+        self.dm_size_code_spin = ttk.Spinbox(
+            show_opts, from_=2, to=20, increment=0.5, width=4,
+            textvariable=self.dm_size_code_var, command=self._on_show_change,
+        )
+        self.dm_size_code_spin.grid(row=0, column=4, sticky="w", padx=(4, 0))
         self.dm_show_short_check = ttk.Checkbutton(
             show_opts, text="Укороченный код", variable=self.dm_show_short_var,
             command=self._on_show_change,
@@ -654,34 +733,71 @@ class ConverterGui:
             dm_actions, text="Сгенерировать PDF", command=self._generate_dm_pdf
         )
         self.dm_generate_button.grid(row=0, column=0, padx=(0, 8))
+        self.dm_openpdf_button = ttk.Button(
+            dm_actions, text="Открыть PDF", command=self._open_dm_pdf
+        )
+        self.dm_openpdf_button.grid(row=0, column=1, padx=(0, 8))
         self.dm_preview_button = ttk.Button(
             dm_actions, text="Предпросмотр", command=self._open_full_preview
         )
-        self.dm_preview_button.grid(row=0, column=1, padx=(0, 8))
+        self.dm_preview_button.grid(row=0, column=2, padx=(0, 8))
         self.dm_print_button = ttk.Button(
             dm_actions, text="Печать", command=self._print_dm_pdf
         )
-        self.dm_print_button.grid(row=0, column=2, padx=(0, 8))
+        self.dm_print_button.grid(row=0, column=3, padx=(0, 8))
         self.dm_openfolder_button = ttk.Button(
             dm_actions, text="Открыть папку", command=self._open_dm_output_folder
         )
-        self.dm_openfolder_button.grid(row=0, column=3, padx=(0, 8))
+        self.dm_openfolder_button.grid(row=0, column=4, padx=(0, 8))
+        self.dm_checkcodes_button = ttk.Button(
+            dm_actions, text="Проверить коды", command=self._check_dm_codes
+        )
+        self.dm_checkcodes_button.grid(row=0, column=5, padx=(0, 8))
         self.dm_exportpng_button = ttk.Button(
             dm_actions, text="Экспорт PNG", command=self._export_dm_png
         )
-        self.dm_exportpng_button.grid(row=0, column=4, padx=(0, 8))
+        self.dm_exportpng_button.grid(row=0, column=6, padx=(0, 8))
 
         self.dm_action_row = dm_actions
+
+        # Шаблоны этикеток (профили настроек)
+        profile_row = ttk.Frame(left)
+        profile_row.grid(row=9, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        profile_row.columnconfigure(1, weight=1)
+        ttk.Label(profile_row, text="Шаблон:").grid(
+            row=0, column=0, sticky="w", padx=(0, 8)
+        )
+        self.dm_profiles_combo = ttk.Combobox(
+            profile_row, textvariable=self.dm_profile_name_var,
+            state="readonly", width=18,
+        )
+        self.dm_profiles_combo.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+        self.dm_profiles_combo.bind("<<ComboboxSelected>>", self._apply_selected_profile)
+        self.dm_save_profile_button = ttk.Button(
+            profile_row, text="Сохранить шаблон", command=self._save_profile_dialog
+        )
+        self.dm_save_profile_button.grid(row=0, column=2, padx=(0, 6))
+        self.dm_load_profile_button = ttk.Button(
+            profile_row, text="Загрузить шаблон", command=self._load_profile_dialog
+        )
+        self.dm_load_profile_button.grid(row=0, column=3)
+        self._refresh_profiles_combo()
 
         self.dm_log = scrolledtext.ScrolledText(
             left, wrap="word", state="disabled", font=("Consolas", 10)
         )
-        self.dm_log.grid(row=9, column=0, columnspan=3, sticky="nsew", pady=(0, 8))
-        left.rowconfigure(9, weight=1)
+        self.dm_log.grid(row=10, column=0, columnspan=3, sticky="nsew", pady=(0, 8))
+        # двойной клик по строке журнала — расшифровка найденного в ней кода
+        self.dm_log.bind("<Double-Button-1>", self._on_dm_log_double)
+        left.rowconfigure(10, weight=1)
 
         ttk.Label(left, textvariable=self.dm_status_var, anchor="w").grid(
-            row=10, column=0, columnspan=3, sticky="ew"
+            row=11, column=0, columnspan=3, sticky="ew"
         )
+        self.dm_progress = ttk.Progressbar(left, mode="determinate", maximum=100)
+        self.dm_progress.grid(row=12, column=0, columnspan=3, sticky="ew", pady=(4, 0))
+        self.dm_progress_label = ttk.Label(left, text="", anchor="w")
+        self.dm_progress_label.grid(row=13, column=0, columnspan=3, sticky="ew")
 
         # ===== Правая часть: живой макет одной этикетки =====
         live_frame = ttk.LabelFrame(tab2_body, text="Макет этикетки (пример)")
@@ -742,11 +858,42 @@ class ConverterGui:
             command=lambda: self._render_full_preview(),
         ).grid(row=0, column=1, sticky="e", pady=(0, 8))
 
+        # после отрисовки всех элементов подгоняем размер окна под содержимое,
+        # чтобы ни нижняя, ни правая граница не обрезали контент
+        self.root.after(50, self._fit_window)
+
+    def _fit_window(self) -> None:
+        """Автоматически подстраивает размер окна, чтобы весь контент
+        помещался без обрезания по краям."""
+        try:
+            self.root.update_idletasks()
+            # требуемые размеры по содержимому
+            req_w = self.root.winfo_reqwidth()
+            req_h = self.root.winfo_reqheight()
+            cur_w, cur_h = self.root.winfo_width(), self.root.winfo_height()
+            # берём максимум: не меньше требуемого, но не больше в разумных пределах
+            new_w = max(cur_w, min(req_w, 2000))
+            new_h = max(cur_h, min(req_h, 1200))
+            if new_w != cur_w or new_h != cur_h:
+                self.root.geometry(f"{new_w}x{new_h}")
+        except Exception:
+            pass
+
     def _set_dm_csv_files(self, files: list[Path]) -> None:
         """Сохраняет список CSV-файлов и обновляет поле выбора и предпросмотр."""
         self._dm_csv_files = list(files)
+        self._dm_cached_first_code = None
         if not files:
             return
+        # кешируем первый код заранее, чтобы не перечитывать все файлы при каждом
+        # обновлении живого макета (это и было причиной сильных тормозов)
+        try:
+            from converter import parse_csv_codes
+            text = self._collect_dm_csv_text()
+            codes = parse_csv_codes(text)
+            self._dm_cached_first_code = codes[0] if codes else None
+        except Exception:
+            self._dm_cached_first_code = None
         if len(files) == 1:
             self.dm_csv_var.set(str(files[0]))
             self.dm_pdf_var.set(str(files[0].with_suffix(".pdf")))
@@ -805,6 +952,51 @@ class ConverterGui:
         if selected:
             self.dm_pdf_var.set(selected)
 
+    def _open_dm_pdf(self) -> None:
+        """Открывает сгенерированный PDF-файл."""
+        if getattr(self, "_generating", False):
+            messagebox.showinfo("Пожалуйста, подождите", "Идёт генерация PDF, дождитесь завершения.")
+            return
+        # открываем фактически созданный файл (мог появиться суффикс _1, _2)
+        if getattr(self, "_last_generated_pdf", None) is not None:
+            path = Path(self._last_generated_pdf)
+            if path.is_file():
+                try:
+                    os.startfile(str(path))  # type: ignore[attr-defined]
+                except Exception as exc:
+                    messagebox.showerror("Ошибка", f"Не удалось открыть PDF:\n{exc}")
+                return
+        out_path = self.dm_pdf_var.get().strip()
+        if not out_path:
+            messagebox.showerror("Ошибка", "Сначала укажите путь к PDF-файлу")
+            return
+        path = Path(out_path)
+        if not path.is_file():
+            messagebox.showerror(
+                "Ошибка",
+                f"PDF-файл не найден:\n{path}\n\nСначала сгенерируйте PDF.",
+            )
+            return
+        try:
+            os.startfile(str(path))  # type: ignore[attr-defined]
+        except Exception as exc:
+            messagebox.showerror("Ошибка", f"Не удалось открыть PDF:\n{exc}")
+
+    @staticmethod
+    def _resolve_saved_pdf(output_pdf: Path) -> str:
+        """Возвращает путь, по которому на самом деле сохранён PDF.
+
+        Устаревший хелпер: реальный путь теперь возвращает сама функция
+        generate_label_pdf (третьим значением), поэтому он больше не
+        используется. Оставлен для обратной совместимости внешнего кода.
+        """
+        save_path = output_pdf
+        n = 1
+        while save_path.exists():
+            save_path = output_pdf.with_stem(f"{output_pdf.stem}_{n}")
+            n += 1
+        return str(save_path)
+
     def _open_dm_output_folder(self) -> None:
         """Открывает папку, где сохраняется/был сохранён PDF."""
         out_path = self.dm_pdf_var.get().strip()
@@ -855,6 +1047,28 @@ class ConverterGui:
         self.dm_status_var.set("Экспорт PNG...")
         self.dm_exportpng_button.configure(state="disabled")
 
+        # Собираем настройки в главном потоке (Tk-переменные нельзя читать
+        # из фонового потока)
+        settings = {
+            "size_w": size_w,
+            "size_h": size_h,
+            "heading": self.dm_name_var.get().strip(),
+            "production_date": self.dm_date_var.get().strip(),
+            "batch": self.dm_batch_var.get().strip(),
+            "show_date": bool(self.dm_show_date_var.get()),
+            "show_batch": bool(self.dm_show_batch_var.get()),
+            "show_code": bool(self.dm_show_code_var.get()),
+            "use_short": bool(self.dm_show_short_var.get()),
+            "bold_name": bool(self.dm_bold_name_var.get()),
+            "bold_date": bool(self.dm_bold_date_var.get()),
+            "bold_batch": bool(self.dm_bold_batch_var.get()),
+            "bold_code": bool(self.dm_bold_code_var.get()),
+            "size_name": _float_or_none(self.dm_size_name_var.get()),
+            "size_date": _float_or_none(self.dm_size_date_var.get()),
+            "size_batch": _float_or_none(self.dm_size_batch_var.get()),
+            "size_code": _float_or_none(self.dm_size_code_var.get()),
+        }
+
         def work() -> None:
             try:
                 saved, err = export_labels_png(
@@ -862,29 +1076,192 @@ class ConverterGui:
                     Path(out_dir),
                     label_w_mm=size_w,
                     label_h_mm=size_h,
-                    heading=self.dm_name_var.get().strip(),
-                    production_date=self.dm_date_var.get().strip(),
-                    batch=self.dm_batch_var.get().strip(),
-                    show_date=self.dm_show_date_var.get(),
-                    show_batch=self.dm_show_batch_var.get(),
-                    show_code=self.dm_show_code_var.get(),
-                    use_short=self.dm_show_short_var.get(),
+                    heading=settings["heading"],
+                    production_date=settings["production_date"],
+                    batch=settings["batch"],
+                    show_date=settings["show_date"],
+                    show_batch=settings["show_batch"],
+                    show_code=settings["show_code"],
+                    use_short=settings["use_short"],
+                    dpi=300,
+                    bold_name=settings["bold_name"],
+                    bold_date=settings["bold_date"],
+                    bold_batch=settings["bold_batch"],
+                    bold_code=settings["bold_code"],
+                    size_name=settings["size_name"],
+                    size_date=settings["size_date"],
+                    size_batch=settings["size_batch"],
+                    size_code=settings["size_code"],
                 )
-                if err:
-                    self.root.after(0, lambda: messagebox.showerror("Ошибка", err))
-                else:
-                    self.root.after(0, lambda: messagebox.showinfo(
-                        "Экспорт завершён",
-                        f"Сохранено этикеток: {saved} из {total_codes}\nв папку:\n{out_dir}",
-                    ))
-                    self.root.after(0, lambda: self.dm_status_var.set(
-                        f"Экспорт: {saved} из {total_codes}"))
+                self.events.put(("dm_png_exported", {
+                    "saved": int(saved),
+                    "err": err or "",
+                    "total_codes": total_codes,
+                    "out_dir": str(out_dir),
+                }))
             except Exception as exc:
-                self.root.after(0, lambda: messagebox.showerror("Ошибка", str(exc)))
-            finally:
-                self.root.after(0, lambda: self.dm_exportpng_button.configure(state="normal"))
+                self.events.put(("dm_png_exported", {
+                    "saved": 0,
+                    "err": f"Ошибка: {exc}" if str(exc) else "Ошибка экспорта PNG",
+                    "total_codes": total_codes,
+                    "out_dir": str(out_dir),
+                }))
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _check_dm_codes(self) -> None:
+        """Проверяет коды из выбранных CSV: структуру, дубликаты.
+        Показывает результат в журнале и всплывающим окном."""
+        from converter import parse_csv_codes
+        try:
+            csv_text = self._collect_dm_csv_text()
+        except Exception as exc:
+            messagebox.showerror("Ошибка", f"Не удалось прочитать CSV:\n{exc}")
+            return
+        codes = parse_csv_codes(csv_text)
+        if not codes:
+            messagebox.showinfo("Проверка кодов", "В выбранных CSV-файлах нет кодов.")
+            return
+
+        details = validate_codes(codes)
+        total = len(details)
+        ok = sum(1 for d in details if not d["problems"])
+        bad = [d for d in details if d["problems"]]
+        duplicates = sum(1 for d in details if d["is_duplicate"])
+
+        lines = ["=== Проверка кодов ===", f"Всего кодов: {total}", f"Корректных: {ok}",
+                 f"С проблемами: {len(bad)}", f"Дубликатов: {duplicates}"]
+        if bad:
+            lines.append("")
+            lines.append("Проблемные коды:")
+            for d in bad:
+                detail = "; ".join(d["problems"])
+                lines.append(f"  №{d['index']}: {detail}")
+                self._log_op(f"Проверка: код №{d['index']} — {detail}")
+        text = "\n".join(lines)
+
+        self.dm_log.configure(state="normal")
+        self.dm_log.delete("1.0", "end")
+        self.dm_log.insert("end", text + "\n")
+        self.dm_log.configure(state="disabled")
+        self.dm_status_var.set(f"Проверка: {ok} из {total} корректных")
+
+        if bad:
+            messagebox.showwarning(
+                "Проверка кодов",
+                f"Всего кодов: {total}\nКорректных: {ok}\n"
+                f"С проблемами: {len(bad)}\nДубликатов: {duplicates}\n\n"
+                f"{text.split(chr(10) + chr(10), 1)[1]}\n\nПодробности в журнале.",
+            )
+        else:
+            messagebox.showinfo(
+                "Проверка кодов",
+                f"Всего кодов: {total}\nКорректных: {ok}\nВсе коды валидны.",
+            )
+        self._log_op(
+            f"Проверка кодов: всего {total}, корректных {ok}, "
+            f"с проблемами {len(bad)}, дублей {duplicates}"
+        )
+
+    def _decode_code_fields(self, code: str) -> list[tuple[str, str]]:
+        """Разбирает полный код маркировки на поля AI 01/21/91/92.
+        Возвращает список (название, значение)."""
+        GS_CHAR = "\x1d"
+        fields: list[tuple[str, str]] = []
+        rest = code
+        if rest.startswith("01"):
+            gtin = rest[2:16]
+            rest = rest[16:]
+            fields.append(("GTIN (01)", gtin))
+        if rest.startswith("21"):
+            serial = rest[2:]
+            if GS_CHAR in serial:
+                serial = serial.split(GS_CHAR, 1)[0]
+            fields.append(("Серийный номер (21)", serial))
+        for part in code.split(GS_CHAR):
+            if part.startswith("91"):
+                fields.append(("Криптоключ (91)", part[2:]))
+            elif part.startswith("92"):
+                fields.append(("Цифровая подпись (92)", part[2:]))
+        return fields
+
+    def _show_code_details(self, code: str) -> None:
+        """Открывает окно с расшифровкой полей кода маркировки."""
+        code = (code or "").strip().strip('"')
+        if not code:
+            messagebox.showinfo("Расшифровка кода", "Введите/выберите код маркировки.")
+            return
+        fields = self._decode_code_fields(code)
+        if not fields:
+            messagebox.showinfo(
+                "Расшифровка кода",
+                "Не удалось распознать структуру кода.\nОжидается 01+GTIN+21+серия(+91+92).",
+            )
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Расшифровка кода")
+        dialog.geometry("720x420")
+        dialog.minsize(480, 260)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        dark = self.dark_var.get()
+        bg = "#1f1f1f" if dark else "#f0f0f0"
+        fg = "#e8e8e8" if dark else "#000000"
+        dialog.configure(bg=bg)
+
+        body = ttk.Frame(dialog)
+        body.pack(fill="both", expand=True, padx=12, pady=10)
+        body.columnconfigure(1, weight=1)
+
+        ttk.Label(body, text="Полный код:").grid(row=0, column=0, sticky="nw",
+                                                 padx=(0, 8), pady=(0, 8))
+        self._detail_code_var = tk.StringVar(value=code)
+        code_entry = ttk.Entry(body, textvariable=self._detail_code_var)
+        code_entry.grid(row=0, column=1, sticky="ew", pady=(0, 8))
+
+        for i, (label, value) in enumerate(fields, start=1):
+            ttk.Label(body, text=label + ":").grid(
+                row=i, column=0, sticky="nw", padx=(0, 8), pady=2
+            )
+            val_entry = ttk.Entry(body)
+            val_entry.insert(0, value)
+            val_entry.configure(state="disabled")
+            val_entry.grid(row=i, column=1, sticky="ew", pady=2)
+
+        buttons = ttk.Frame(dialog)
+        buttons.pack(fill="x", padx=12, pady=(0, 10))
+
+        def copy_code() -> None:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(self._detail_code_var.get())
+            self.dm_status_var.set("Код скопирован")
+
+        ttk.Button(buttons, text="Копировать код", command=copy_code).pack(side="left")
+        ttk.Button(buttons, text="Закрыть", command=dialog.destroy).pack(
+            side="left", padx=(8, 0)
+        )
+        dialog.after(10, lambda: dialog.lift())
+
+    def _show_details_for_line(self, line: str) -> None:
+        """По клику/двойному клику по строке журнала открывает расшифровку,
+        если в строке найден код маркировки."""
+        for token in line.split():
+            if token.startswith("01") and len(token) >= 16:
+                self._show_code_details(token)
+                return
+
+    def _on_dm_log_double(self, event) -> None:
+        """Обрабатывает двойной клик по журналу: открывает расшифровку кода
+        из строки под курсором, если там есть код маркировки."""
+        try:
+            index = self.dm_log.index(f"@{event.x},{event.y}")
+            line = self.dm_log.get(f"{index} linestart", f"{index} lineend")
+        except Exception:
+            line = ""
+        if line:
+            self._show_details_for_line(line)
 
     def _collect_dm_csv_text(self) -> str:
         """Возвращает объединённый текст кодов из всех выбранных CSV-файлов."""
@@ -961,44 +1338,106 @@ class ConverterGui:
 
         self.dm_status_var.set(f"Генерация (всего: {total_codes})...")
         self.dm_generate_button.configure(state="disabled")
+        self._generating = True
+        self._dm_progress_state = [0, total_codes]  # (done, total) обновляется из потока
+        self.dm_progress.configure(value=0)
+        self.dm_progress_label.configure(text=f"0 из {total_codes}")
+
+        def _poll_progress() -> None:
+            if not self._generating:
+                return
+            done, total = self._dm_progress_state
+            pct = int(done * 100.0 / total) if total else 0
+            self.dm_progress.configure(value=pct)
+            self.dm_progress_label.configure(text=f"Обработано: {done} из {total}")
+            self.root.after(100, _poll_progress)
+        self.root.after(100, _poll_progress)
+
+        # Собираем в ГЛАВНОМ потоке все значения настроек и диагностику:
+        # обращаться к Tk-переменным или вызывать root.after из фонового
+        # потока нельзя (RuntimeError: main thread is not in main loop).
+        settings = {
+            "size_w": size_w,
+            "size_h": size_h,
+            "scale": self._dm_scale_for(size_w),
+            "heading": self.dm_name_var.get().strip(),
+            "production_date": self.dm_date_var.get().strip(),
+            "batch": self.dm_batch_var.get().strip(),
+            "show_date": bool(self.dm_show_date_var.get()),
+            "show_batch": bool(self.dm_show_batch_var.get()),
+            "show_code": bool(self.dm_show_code_var.get()),
+            "show_short": bool(self.dm_show_short_var.get()),
+            "bold_name": bool(self.dm_bold_name_var.get()),
+            "bold_date": bool(self.dm_bold_date_var.get()),
+            "bold_batch": bool(self.dm_bold_batch_var.get()),
+            "bold_code": bool(self.dm_bold_code_var.get()),
+            "size_name": _float_or_none(self.dm_size_name_var.get()),
+            "size_date": _float_or_none(self.dm_size_date_var.get()),
+            "size_batch": _float_or_none(self.dm_size_batch_var.get()),
+            "size_code": _float_or_none(self.dm_size_code_var.get()),
+            "diag": {
+                "size_mm": [size_w, size_h],
+                "production_date": self.dm_date_var.get().strip(),
+                "batch": self.dm_batch_var.get().strip(),
+                "show_date": bool(self.dm_show_date_var.get()),
+                "show_batch": bool(self.dm_show_batch_var.get()),
+                "show_code": bool(self.dm_show_code_var.get()),
+                "show_short": bool(self.dm_show_short_var.get()),
+                "codes": total_codes,
+            },
+        }
 
         def work() -> None:
             try:
-                scale = self._dm_scale_for(size_w)
-                pages, err = generate_label_pdf(
+                csv_text = self._collect_dm_csv_text()
+                def _on_progress(done, total):
+                    self._dm_progress_state[0] = done
+                    self._dm_progress_state[1] = total
+                pages, err, save_path = generate_label_pdf(
                     csv_text,
                     out_path,
                     label_w_mm=size_w,
                     label_h_mm=size_h,
-                    heading=self.dm_name_var.get().strip(),
-                    production_date=self.dm_date_var.get().strip(),
-                    batch=self.dm_batch_var.get().strip(),
-                    show_date=self.dm_show_date_var.get(),
-                    show_batch=self.dm_show_batch_var.get(),
-                    show_code=self.dm_show_code_var.get(),
-                    use_short=self.dm_show_short_var.get(),
-                    scale=scale,
+                    heading=settings["heading"],
+                    production_date=settings["production_date"],
+                    batch=settings["batch"],
+                    show_date=settings["show_date"],
+                    show_batch=settings["show_batch"],
+                    show_code=settings["show_code"],
+                    use_short=settings["show_short"],
+                    scale=settings["scale"],
+                    bold_name=settings["bold_name"],
+                    bold_date=settings["bold_date"],
+                    bold_batch=settings["bold_batch"],
+                    bold_code=settings["bold_code"],
+                    size_name=settings["size_name"],
+                    size_date=settings["size_date"],
+                    size_batch=settings["size_batch"],
+                    size_code=settings["size_code"],
+                    progress_cb=_on_progress,
                 )
-                if err and pages == 0:
-                    self.root.after(0, lambda: messagebox.showerror("Ошибка", err))
-                    self.root.after(0, lambda: self.dm_status_var.set("Ошибка"))
-                else:
-                    self.last_output_dir = str(out_path.parent)
-                    if err:
-                        self.root.after(0, lambda: messagebox.showwarning(
-                            "Предупреждение", err))
-                        self.root.after(0, lambda: self.dm_status_var.set(
-                            f"Готово: {pages} из {total_codes} (часть пропущена)"))
-                    else:
-                        self.root.after(0, lambda: self.dm_status_var.set(
-                            f"Готово: {pages} из {total_codes}"))
-                    self.root.after(0, lambda: _append_log(
-                        f"Создан PDF: {out_path}\n  Страниц: {pages}\n"))
+                # реальный путь сохранения (учитывает копии с номером вместо
+                # перезаписи, если файл уже существовал) — напрямую ОТ generator
+                actual = save_path or out_path
+                # Результат передаём в главный поток через очередь событий;
+                # там же обновляем GUI, статус и авто-открытие.
+                self.events.put(("dm_generated", {
+                    "pages": pages,
+                    "err": err or "",
+                    "save_path": str(actual),
+                    "total_codes": total_codes,
+                    "out_path": str(out_path),
+                    "diag": settings["diag"],
+                }))
             except Exception as exc:
-                self.root.after(0, lambda: messagebox.showerror("Ошибка", str(exc)))
-                self.root.after(0, lambda: self.dm_status_var.set("Ошибка"))
-            finally:
-                self.root.after(0, lambda: self.dm_generate_button.configure(state="normal"))
+                self.events.put(("dm_generated", {
+                    "pages": 0,
+                    "err": f"Ошибка: {exc}" if str(exc) else "Ошибка генерации PDF",
+                    "save_path": str(out_path),
+                    "total_codes": total_codes,
+                    "out_path": str(out_path),
+                    "diag": settings["diag"],
+                }))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -1077,45 +1516,90 @@ class ConverterGui:
         self.dm_status_var.set("Подготовка к печати...")
         self.dm_print_button.configure(state="disabled")
 
+        # Собираем настройки в главном потоке (Tk-переменные нельзя читать
+        # из фонового потока)
+        settings = {
+            "size_w": size_w,
+            "size_h": size_h,
+            "scale": self._dm_scale_for(size_w),
+            "heading": self.dm_name_var.get().strip(),
+            "production_date": self.dm_date_var.get().strip(),
+            "batch": self.dm_batch_var.get().strip(),
+            "show_date": bool(self.dm_show_date_var.get()),
+            "show_batch": bool(self.dm_show_batch_var.get()),
+            "show_code": bool(self.dm_show_code_var.get()),
+            "use_short": bool(self.dm_show_short_var.get()),
+        }
+
         def work() -> None:
             import tempfile
+            import traceback
             tmp_pdf = Path(tempfile.gettempdir()) / "delfin_dm_print.pdf"
             try:
+                # удаляем временный PDF от прошлой печати, чтобы get save_path
+                # не ушёл в _1, _2 и т.д.
+                if tmp_pdf.exists():
+                    tmp_pdf.unlink()
                 csv_text = self._collect_dm_csv_text()
-                scale = self._dm_scale_for(size_w)
-                pages, err = generate_label_pdf(
+                pages, err, _save_path = generate_label_pdf(
                     csv_text,
                     tmp_pdf,
                     label_w_mm=size_w,
                     label_h_mm=size_h,
-                    heading=self.dm_name_var.get().strip(),
-                    production_date=self.dm_date_var.get().strip(),
-                    batch=self.dm_batch_var.get().strip(),
-                    show_date=self.dm_show_date_var.get(),
-                    show_batch=self.dm_show_batch_var.get(),
-                    show_code=self.dm_show_code_var.get(),
-                    use_short=self.dm_show_short_var.get(),
-                    scale=scale,
+                    heading=settings["heading"],
+                    production_date=settings["production_date"],
+                    batch=settings["batch"],
+                    show_date=settings["show_date"],
+                    show_batch=settings["show_batch"],
+                    show_code=settings["show_code"],
+                    use_short=settings["use_short"],
+                    scale=settings["scale"],
                 )
-                if err and pages == 0:
-                    self.root.after(0, lambda: messagebox.showerror("Ошибка", err))
-                else:
-                    if err:
-                        self.root.after(0, lambda: messagebox.showwarning(
-                            "Предупреждение", err))
-                    perr = print_pdf_windows(tmp_pdf)
-                    if perr:
-                        self.root.after(0, lambda: messagebox.showerror("Ошибка", perr))
-                    else:
-                        self.root.after(0, lambda: self.dm_status_var.set(
-                            f"Печать открыта: {pages} этикеток"
-                        ))
+                self.events.put(("dm_printed", {
+                    "pages": pages,
+                    "err": err or "",
+                    "tmp_pdf": str(tmp_pdf),
+                }))
             except Exception as exc:
-                self.root.after(0, lambda: messagebox.showerror("Ошибка", str(exc)))
-            finally:
-                self.root.after(0, lambda: self.dm_print_button.configure(state="normal"))
+                self.events.put(("dm_printed", {
+                    "pages": 0,
+                    "err": f"Ошибка: {exc}" if str(exc) else "Ошибка печати",
+                    "tmp_pdf": str(tmp_pdf),
+                }))
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _preview_canvas_width(self) -> int:
+        """Считывает ширину канваса полного предпросмотра В ГЛАВНОМ потоке
+        (из фонового потока обращаться к Tcl нельзя). Возвращает реальную
+        ширину или разумное значение по умолчанию."""
+        try:
+            if self.dm_full_preview_canvas.winfo_exists():
+                self.root.update_idletasks()
+                w = self.dm_full_preview_canvas.winfo_width()
+                if w > 100:
+                    return w
+        except Exception:
+            pass
+        return 300
+
+    def _preview_params(self) -> dict:
+        """Собирает ВСЕ значения настроек этикетки в главном потоке, чтобы
+        фоновый поток предпросмотра не обращался к Tk-переменным."""
+        try:
+            size_w, size_h = self._parse_label_size(self.dm_label_size_var.get())
+        except ValueError:
+            size_w, size_h = 58, 40
+        return {
+            "size_w": size_w,
+            "size_h": size_h,
+            "production_date": self.dm_date_var.get().strip(),
+            "batch": self.dm_batch_var.get().strip(),
+            "name": self.dm_name_var.get().strip(),
+            "show_date": bool(self.dm_show_date_var.get()),
+            "show_batch": bool(self.dm_show_batch_var.get()),
+            "show_code": bool(self.dm_show_code_var.get()),
+        }
 
     def _preview_dm(self) -> None:
         files = getattr(self, "_dm_csv_files", None) or []
@@ -1139,17 +1623,21 @@ class ConverterGui:
             return
         self._preview_busy = True
 
+        # собираем настройки и ширину канваса ДО запуска фонового потока
+        display_width = self._preview_canvas_width()
+        params = self._preview_params()
+
         def work() -> None:
             try:
                 csv_text = self._collect_dm_csv_text()
-                combined, total = self._build_preview_images(csv_text, max_codes=10 ** 9)
-                # отрисовку делаем в главном потоке Tk (из фонового нельзя)
-                self.root.after(0, lambda: self._draw_preview(combined, total))
+                combined, total = self._build_preview_images(
+                    csv_text, max_codes=30, display_width=display_width, params=params
+                )
+                # отрисовка выполняется в главном потоке через очередь событий
+                # (из фонового потока нельзя трогать Tk или вызывать root.after)
+                self.events.put(("preview_draw", (combined, total)))
             except Exception as exc:
-                self.root.after(0, lambda: messagebox.showerror("Ошибка", str(exc)))
-                self.root.after(0, lambda: self.dm_status_var.set("Ошибка"))
-            finally:
-                self._preview_busy = False
+                self.events.put(("preview_error", str(exc)))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -1174,27 +1662,36 @@ class ConverterGui:
             return
         self._preview_busy = True
 
+        # собираем настройки и ширину канваса ДО запуска фонового потока
+        display_width = self._preview_canvas_width()
+        params = self._preview_params()
+
         def work() -> None:
             try:
                 csv_text = self._collect_dm_csv_text()
-                combined, total = self._build_preview_images(csv_text, max_codes=10 ** 9)
-                self.root.after(0, lambda: self._draw_preview(combined, total))
+                combined, total = self._build_preview_images(
+                    csv_text, max_codes=30, display_width=display_width, params=params
+                )
+                self.events.put(("preview_draw", (combined, total)))
             except Exception as exc:
-                self.root.after(0, lambda: messagebox.showerror("Ошибка", str(exc)))
-                self.root.after(0, lambda: self.dm_status_var.set("Ошибка"))
-            finally:
-                self._preview_busy = False
+                self.events.put(("preview_error", str(exc)))
 
         threading.Thread(target=work, daemon=True).start()
 
     def _build_preview_images(
-        self, csv_text: str, max_codes: int
+        self,
+        csv_text: str,
+        *,
+        max_codes: int,
+        display_width: int,
+        params: dict,
     ) -> tuple[object, int]:
-        """Генерирует ОДНО общее изображение всех этикеток в фоновом потоке.
+        """Генерирует ОДНО общее изображение этикеток в фоновом потоке.
 
         Возвращает (комбинированное PIL-изображение, число этикеток).
         Компоновка в одно изображение позволяет показать результат одним
-        кадром без мерцания канваса. Не трогает Tk-виджеты.
+        кадром без мерцания канваса. НЕ трогает Tk-виджеты: все настройки
+        и ширина канваса передаются параметрами, собранными в главном потоке.
         """
         import subprocess
         import tempfile
@@ -1207,17 +1704,16 @@ class ConverterGui:
         if zint_exe is None:
             raise RuntimeError("Не найден zint.exe")
 
-        try:
-            size_w, size_h = self._parse_label_size(self.dm_label_size_var.get())
-        except ValueError:
-            raise RuntimeError("Выберите корректный размер этикетки")
-        production_date = self.dm_date_var.get().strip()
-        batch = self.dm_batch_var.get().strip()
-        show_date = self.dm_show_date_var.get()
-        show_batch = self.dm_show_batch_var.get()
-        show_code = self.dm_show_code_var.get()
+        size_w = params["size_w"]
+        size_h = params["size_h"]
+        production_date = params["production_date"]
+        batch = params["batch"]
+        name = params["name"]
+        show_date = params["show_date"]
+        show_batch = params["show_batch"]
+        show_code = params["show_code"]
 
-        canvas_w = self.dm_full_preview_canvas.winfo_width()
+        canvas_w = display_width
         if canvas_w < 100:
             canvas_w = 300
         max_display_w = canvas_w - 24
@@ -1257,7 +1753,7 @@ class ConverterGui:
                     # DataMatrix — в верхней части этикетки (крупный)
                     m = 8
                     top_margin = 10  # небольшой отступ сверху
-                    top_area_h = int(disp_h * 0.62)
+                    top_area_h = int(disp_h * 0.50)
                     dm_w = disp_w - 2 * m
                     dm_h = int(dm_w * dm.height / dm.width)
                     if dm_h > top_area_h - top_margin:
@@ -1268,7 +1764,6 @@ class ConverterGui:
 
                     # текст под штрихкодом — по центру этикетки (как в макете)
                     y_text = top_margin + dm_h + 6
-                    name = self.dm_name_var.get().strip()
                     lines = []
                     if show_date and production_date:
                         lines.append(f"Дата производства: {production_date}")
@@ -1281,7 +1776,7 @@ class ConverterGui:
                     for line in lines:
                         line_w = draw.textlength(line, font=font)
                         draw.text(((disp_w - line_w) / 2, y_text), line, fill="black", font=font)
-                        y_text += 13
+                        y_text += 11
                     labels.append(label)
             except Exception:
                 # ошибочный код (некорректный формат) — пропускаем, не срывая весь предпросмотр
@@ -1290,21 +1785,12 @@ class ConverterGui:
         # компонуем все этикетки в одно вертикальное изображение
         if not labels:
             return Image.new("RGBA", (400, 100), "white"), 0
-        gap = 22
+        gap = 8
         combined_h = sum(l.height for l in labels) + gap * (len(labels))
         combined = Image.new("RGBA", (max(l.width for l in labels) + 40, combined_h), "#f0f0f0")
         y_off = 14
         for i, lab in enumerate(labels):
             combined.paste(lab, (20, y_off), lab)
-            # подпись номера этикетки
-            d = ImageDraw.Draw(combined)
-            lbl = f"Этикетка {i + 1}"
-            if hasattr(d, "textlength"):
-                tw = d.textlength(lbl, font=font)
-            else:
-                tw = len(lbl) * 5
-            d.text(((combined.width - tw) / 2, y_off + lab.height + 3), lbl,
-                   fill="#888888", font=font)
             y_off += lab.height + gap
         return combined, len(labels)
 
@@ -1388,10 +1874,19 @@ class ConverterGui:
 
         if first_code:
             # Настоящий DataMatrix (по стандарту GS1/ECC200) подгружается
-            # асинхронно через zint — без окон и зависаний.
-            self._insert_real_dm_async(
-                first_code, dm_x, dm_y, int(dm_size)
-            )
+            # асинхронно через zint — с задержкой (debounce), чтобы не запускать
+            # процесс на каждое нажатие клавиши при быстром вводе.
+            def _launch_dm():
+                self._insert_real_dm_async(
+                    first_code, dm_x, dm_y, int(dm_size),
+                    use_short=bool(self.dm_show_short_var.get()),
+                )
+            if getattr(self, "_live_dm_after_id", None):
+                try:
+                    self.root.after_cancel(self._live_dm_after_id)
+                except Exception:
+                    pass
+            self._live_dm_after_id = self.root.after(200, _launch_dm)
             # пока картинка не готова — placeholder-рамка
             canvas.create_rectangle(
                 dm_x, dm_y, dm_x + dm_size, dm_y + dm_size,
@@ -1416,30 +1911,34 @@ class ConverterGui:
         tx = x0
         ty = dm_y + dm_size + 10
         mini = max(5, int(5 * (lbl_w / 150)))
-        line = lambda s: canvas.create_text(
-            x0 + lbl_w / 2, ty, text=s or " ", fill="#333333",
-            font=("Arial", mini), anchor="n"
-        )
+        def line(s, bold=False):
+            canvas.create_text(
+                x0 + lbl_w / 2, ty, text=s or " ", fill="#333333",
+                font=("Arial", mini, "bold" if bold else "normal"), anchor="n"
+            )
         if self.dm_show_date_var.get() and self.dm_date_var.get().strip():
-            line(f"Дата производства: {self.dm_date_var.get().strip()}")
-            ty += mini + 6
+            line(f"Дата производства: {self.dm_date_var.get().strip()}", bold=self.dm_bold_date_var.get())
+            ty += mini + 2
         if self.dm_show_batch_var.get() and self.dm_batch_var.get().strip():
-            line(f"Партия: {self.dm_batch_var.get().strip()}")
-            ty += mini + 6
+            line(f"Партия: {self.dm_batch_var.get().strip()}", bold=self.dm_bold_batch_var.get())
+            ty += mini + 2
         if self.dm_name_var.get().strip():
-            line(self.dm_name_var.get().strip())
-            ty += mini + 6
+            line(self.dm_name_var.get().strip(), bold=self.dm_bold_name_var.get())
+            ty += mini + 2
         if self.dm_show_code_var.get() and first_code:
             shown = first_code.replace("\x1d", "␝")[:40]
-            line(shown)
-            ty += mini + 6
+            line(shown, bold=self.dm_bold_code_var.get())
+            ty += mini + 2
         if not first_code:
             line("(файл не загружен)")
-            ty += mini + 6
+            ty += mini + 2
 
-    def _insert_real_dm_async(self, code: str, x, y, size: int) -> None:
+    def _insert_real_dm_async(self, code: str, x, y, size: int, use_short: bool = False) -> None:
         """Генерирует настоящий GS1 DataMatrix через zint в фоновом потоке
-        (без окон) и вставляет картинку в макет по готовности."""
+        (без окон) и вставляет картинку в макет по готовности.
+        Только генерация PNG и resize выполняются в потоке; всё остальное,
+        что связано с Tk (создание PhotoImage, отрисовка на канвасе), — в
+        главном потоке через очередь событий."""
         canvas = getattr(self, "dm_live_canvas", None)
         if canvas is None:
             return
@@ -1452,14 +1951,13 @@ class ConverterGui:
                 from converter import (
                     find_zint_exe, gs1data_to_zint_data,
                     code_identification, gs1data_to_zint_from_short,
-                    is_code_truncated,
                 )
-                from PIL import Image, ImageTk
+                from PIL import Image
 
                 zint_exe = find_zint_exe()
                 if zint_exe is None:
                     return
-                if self.dm_show_short_var.get():
+                if use_short:
                     data = gs1data_to_zint_from_short(code_identification(code))
                 else:
                     data = gs1data_to_zint_data(code)
@@ -1475,13 +1973,8 @@ class ConverterGui:
                         return
                     img = Image.open(str(png_path)).convert("RGB")
                     img = img.resize((size, size), Image.LANCZOS)
-                    photo = ImageTk.PhotoImage(img)
-                    if not hasattr(self, "_live_photo"):
-                        self._live_photo = None
-                    self._live_photo = photo
-                    # вставляем в главном потоке
-                    self.root.after(0, lambda: canvas.create_image(
-                        x, y, image=photo, anchor="nw"))
+                    # отдаём PIL-изображение в главный поток для отрисовки
+                    self.events.put(("dm_live_insert", (img, x, y)))
             except Exception:
                 pass
 
@@ -1491,12 +1984,18 @@ class ConverterGui:
         return "\x1d"
 
     def _first_csv_code(self) -> str:
-        """Возвращает первый реальный код из выбранных CSV-файлов (если есть)."""
+        """Возвращает первый реальный код из выбранных CSV-файлов (если есть).
+        Использует кеш, вычисленный при выборе файлов, чтобы не перечитывать
+        большой CSV при каждом обновлении живого макета."""
+        cached = getattr(self, "_dm_cached_first_code", None)
+        if cached is not None:
+            return cached
         try:
             from converter import parse_csv_codes
             text = self._collect_dm_csv_text()
             codes = parse_csv_codes(text)
-            return codes[0] if codes else ""
+            self._dm_cached_first_code = codes[0] if codes else None
+            return self._dm_cached_first_code or ""
         except Exception:
             return ""
 
@@ -2003,6 +2502,10 @@ class ConverterGui:
                 self.events.put(("log", "Результат: успешно\n\n"))
                 if combined_output_path is None:
                     self.last_output_dir = str(csv_path.parent)
+                self._log_op(
+                    f"Декодирован PDF: {pdf_path} -> {csv_path} "
+                    f"(кодов: {decoded.code_count}, уникальных: {decoded.unique_code_count})"
+                )
 
             self.events.put(("progress", index))
 
@@ -2049,10 +2552,140 @@ class ConverterGui:
                 elif event_type == "done":
                     succeeded, failed, cancelled = payload  # type: ignore[misc]
                     self._finish(int(succeeded), int(failed), bool(cancelled))
+                elif event_type == "preview_draw":
+                    combined, total = payload  # type: ignore[misc]
+                    # отрисовываем в главном потоке и снимаем блокировку
+                    self._preview_busy = False
+                    try:
+                        self._draw_preview(combined, total)
+                    except Exception as exc:  # pragma: no cover
+                        messagebox.showerror("Ошибка", str(exc))
+                        self.dm_status_var.set("Ошибка")
+                elif event_type == "preview_error":
+                    # отрисовка завершилась ошибкой — снимаем блокировку и сообщаем
+                    self._preview_busy = False
+                    messagebox.showerror("Ошибка", str(payload))
+                    self.dm_status_var.set("Ошибка")
+                elif event_type == "dm_generated":
+                    self._handle_dm_generated(payload)  # type: ignore[arg-type]
+                elif event_type == "dm_printed":
+                    self._handle_dm_printed(payload)  # type: ignore[arg-type]
+                elif event_type == "dm_png_exported":
+                    self._handle_dm_png_exported(payload)  # type: ignore[arg-type]
+                elif event_type == "dm_live_insert":
+                    self._handle_dm_live_insert(payload)  # type: ignore[arg-type]
         except queue.Empty:
             pass
 
         self.root.after(100, self._drain_events)
+
+    def _handle_dm_generated(self, data: dict) -> None:
+        """Обрабатывает результат генерации PDF (запускается в ГЛАВНОМ потоке).
+        Раскрывает все GUI-обновления, журнал и авто-открытие свежего файла,
+        которые нельзя было делать из фонового потока генерации."""
+        pages = int(data.get("pages", 0))
+        err = str(data.get("err", "") or "")
+        actual = data.get("save_path", "")
+        out_path = data.get("out_path", "")
+        total_codes = int(data.get("total_codes", 0))
+        diag = data.get("diag")
+
+        self._generating = False
+        self.dm_progress.configure(value=100)
+        self.dm_progress_label.configure(text="Готово")
+        self.dm_generate_button.configure(state="normal")
+
+        if diag is not None:
+            self._append_log(f"[diag] {diag}\n")
+
+        if pages > 0:
+            self._last_generated_pdf = actual
+            # сразу открываем свежий PDF в главном потоке (root.after здесь
+            # допустим — мы в главном потоке)
+            self.root.after(200, lambda p=actual: _safe_startfile(str(p)))
+
+        if err and pages == 0:
+            messagebox.showerror("Ошибка", err)
+            self.dm_status_var.set("Ошибка")
+            self._log_op(f"Генерация PDF не удалась: {err}")
+            return
+
+        self.last_output_dir = str(Path(out_path).parent) if out_path else self.last_output_dir
+        self._log_op(
+            f"Сгенерирован PDF: {actual or out_path} "
+            f"(страниц: {pages} из {total_codes})"
+        )
+        if err:
+            self.dm_status_var.set(f"Готово: {pages} из {total_codes} (часть пропущена)")
+            self._append_log(f"Создан PDF: {out_path}\n  Страниц: {pages}\n")
+            # предупреждение про копию/пропуск — только в журнал, без окна
+            self._append_log(err + "\n")
+        else:
+            self.dm_status_var.set(f"Готово: {pages} из {total_codes}")
+            self._append_log(f"Создан PDF: {actual}\n  Страниц: {pages}\n")
+
+    def _handle_dm_printed(self, data: dict) -> None:
+        """Обрабатывает результат подготовки PDF к печати (главный поток)."""
+        from converter import print_pdf_windows
+
+        pages = int(data.get("pages", 0))
+        err = str(data.get("err", "") or "")
+        tmp_pdf = data.get("tmp_pdf", "")
+
+        self.dm_print_button.configure(state="normal")
+
+        if err and pages == 0:
+            messagebox.showerror("Ошибка", err)
+            return
+
+        if err:
+            messagebox.showwarning("Предупреждение", err)
+
+        perr = print_pdf_windows(Path(tmp_pdf))
+        if perr:
+            messagebox.showerror("Ошибка", perr)
+            self._log_op(f"Печать не запущена: {perr}")
+        else:
+            self._log_op(f"Отправлено на печать: {pages} этикеток")
+            self.dm_status_var.set(f"Печать открыта: {pages} этикеток")
+
+    def _handle_dm_png_exported(self, data: dict) -> None:
+        """Обрабатывает результат экспорта этикеток в PNG (главный поток)."""
+        saved = int(data.get("saved", 0))
+        err = str(data.get("err", "") or "")
+        total_codes = int(data.get("total_codes", 0))
+        out_dir = str(data.get("out_dir", ""))
+
+        self.dm_exportpng_button.configure(state="normal")
+
+        if err:
+            messagebox.showerror("Ошибка", err)
+            self._log_op(f"Экспорт PNG не удался: {err}")
+        else:
+            self._log_op(f"Экспорт PNG: сохранено {saved} из {total_codes} в {out_dir}")
+            messagebox.showinfo(
+                "Экспорт завершён",
+                f"Сохранено этикеток: {saved} из {total_codes}\nв папку:\n{out_dir}",
+            )
+            self.dm_status_var.set(f"Экспорт: {saved} из {total_codes}")
+
+    def _handle_dm_live_insert(self, payload) -> None:
+        """Вставляет готовый DataMatrix в живой макет (главный поток).
+        PhotoImage создаётся здесь, в главном потоке — так допустимо."""
+        from PIL import ImageTk
+
+        img, x, y = payload
+        canvas = getattr(self, "dm_live_canvas", None)
+        if canvas is None or img is None:
+            return
+        try:
+            photo = ImageTk.PhotoImage(img)
+            if not hasattr(self, "_live_photo"):
+                self._live_photo = None
+            self._live_photo = photo
+            canvas.create_image(int(x), int(y), image=photo, anchor="nw")
+        except Exception:
+            pass
 
     def _finish(self, succeeded: int, failed: int, cancelled: bool) -> None:
         self.running = False
@@ -2091,6 +2724,163 @@ class ConverterGui:
         self.log.configure(state="normal")
         self.log.delete("1.0", "end")
         self.log.configure(state="disabled")
+
+    def _log_op(self, message: str) -> None:
+        """Пишет строку операции с меткой времени в файл журнала."""
+        import datetime
+        try:
+            stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            log_file = log_file_path()
+            line = f"[{stamp}] {message}\n"
+            with open(log_file, "a", encoding="utf-8") as fh:
+                fh.write(line)
+        except OSError:
+            pass
+
+    def _refresh_profiles_combo(self) -> None:
+        """Обновляет список шаблонов в выпадающем списке."""
+        if not hasattr(self, "dm_profiles_combo"):
+            return
+        names = list(self._profiles.keys())
+        self.dm_profiles_combo.configure(values=names)
+        if self.dm_profile_name_var.get() not in names:
+            self.dm_profile_name_var.set("")
+
+    def _collect_profile(self) -> dict:
+        """Собирает текущие настройки этикетки в dict для шаблона."""
+        return {
+            "label_size": self.dm_label_size_var.get(),
+            "group": self.dm_group_var.get(),
+            "show_date": bool(self.dm_show_date_var.get()),
+            "show_batch": bool(self.dm_show_batch_var.get()),
+            "show_code": bool(self.dm_show_code_var.get()),
+            "show_short": bool(self.dm_show_short_var.get()),
+            "name": self.dm_name_var.get(),
+            "date": self.dm_date_var.get(),
+            "batch": self.dm_batch_var.get(),
+            "bold_name": bool(self.dm_bold_name_var.get()),
+            "bold_date": bool(self.dm_bold_date_var.get()),
+            "bold_batch": bool(self.dm_bold_batch_var.get()),
+            "bold_code": bool(self.dm_bold_code_var.get()),
+            "size_name": self.dm_size_name_var.get(),
+            "size_date": self.dm_size_date_var.get(),
+            "size_batch": self.dm_size_batch_var.get(),
+            "size_code": self.dm_size_code_var.get(),
+        }
+
+    def _apply_profile(self, profile: dict) -> None:
+        """Применяет словарь настроек шаблона к полям формы."""
+        if not isinstance(profile, dict):
+            return
+        mapping = {
+            "label_size": (self.dm_label_size_var, str),
+            "group": (self.dm_group_var, str),
+            "name": (self.dm_name_var, str),
+            "date": (self.dm_date_var, str),
+            "batch": (self.dm_batch_var, str),
+            "size_name": (self.dm_size_name_var, str),
+            "size_date": (self.dm_size_date_var, str),
+            "size_batch": (self.dm_size_batch_var, str),
+            "size_code": (self.dm_size_code_var, str),
+        }
+        for key, (var, caster) in mapping.items():
+            if key in profile and isinstance(profile[key], str):
+                try:
+                    var.set(caster(profile[key]))
+                except Exception:
+                    pass
+        bool_map = {
+            "show_date": self.dm_show_date_var,
+            "show_batch": self.dm_show_batch_var,
+            "show_code": self.dm_show_code_var,
+            "show_short": self.dm_show_short_var,
+            "bold_name": self.dm_bold_name_var,
+            "bold_date": self.dm_bold_date_var,
+            "bold_batch": self.dm_bold_batch_var,
+            "bold_code": self.dm_bold_code_var,
+        }
+        for key, var in bool_map.items():
+            if key in profile:
+                try:
+                    var.set(bool(profile[key]))
+                except Exception:
+                    pass
+        # корректируем список размеров под группу
+        group = self.dm_group_var.get()
+        sizes = self._sizes_for_group(group)
+        if hasattr(self, "dm_size_combo"):
+            self.dm_size_combo.configure(values=sizes)
+        if self.dm_label_size_var.get() not in sizes:
+            self.dm_label_size_var.set(sizes[0] if sizes else "58 × 40")
+        self._update_live_mock()
+
+    def _apply_selected_profile(self, _event=None) -> None:
+        """Применяет шаблон, выбранный из выпадающего списка."""
+        name = self.dm_profile_name_var.get()
+        profile = self._profiles.get(name)
+        if profile:
+            self._apply_profile(profile)
+            self.dm_status_var.set(f"Загружен шаблон: {name}")
+            self._log_op(f"Загружен шаблон этикеток: {name}")
+
+    def _save_profile_dialog(self) -> None:
+        """Сохраняет текущие настройки как шаблон этикетки."""
+        if not hasattr(self, "dm_profiles_combo"):
+            return
+        name = self.dm_profile_name_var.get().strip()
+        if not name:
+            from tkinter import simpledialog
+
+            name = simpledialog.askstring(
+                "Сохранить шаблон",
+                "Введите имя шаблона:",
+                parent=self.root,
+            )
+            if not name:
+                return
+            name = name.strip()
+            if not name:
+                return
+        self._profiles[name] = self._collect_profile()
+        self._refresh_profiles_combo()
+        self.dm_profile_name_var.set(name)
+        self.dm_status_var.set(f"Шаблон сохранён: {name}")
+        self._log_op(f"Сохранён шаблон этикеток: {name}")
+        self._save_config()
+
+    def _load_profile_dialog(self) -> None:
+        """Загружает сохранённый шаблон этикетки."""
+        if not hasattr(self, "dm_profiles_combo"):
+            return
+        names = list(self._profiles.keys())
+        if not names:
+            messagebox.showinfo("Шаблоны", "Сохранённых шаблонов пока нет.")
+            return
+        from tkinter import simpledialog
+
+        picked = simpledialog.askstring(
+            "Загрузить шаблон",
+            "Введите имя шаблона:\n\n" + "\n".join(names),
+            parent=self.root,
+        )
+        if not picked:
+            return
+        picked = picked.strip()
+        profile = self._profiles.get(picked)
+        if profile is None:
+            # пробуем нечёткое совпадение по подстроке
+            for n in names:
+                if picked.lower() in n.lower():
+                    profile = self._profiles[n]
+                    picked = n
+                    break
+        if profile is None:
+            messagebox.showerror("Ошибка", f"Шаблон не найден:\n{picked}")
+            return
+        self._apply_profile(profile)
+        self.dm_profile_name_var.set(picked)
+        self.dm_status_var.set(f"Загружен шаблон: {picked}")
+        self._log_op(f"Загружен шаблон этикеток: {picked}")
 
     def _load_config(self) -> None:
         cfg = config_path()
@@ -2143,6 +2933,39 @@ class ConverterGui:
             except Exception:
                 pass
 
+        # жирность и размеры шрифтов
+        for plain_key, var_name in (
+            ("dm_bold_name", "dm_bold_name_var"),
+            ("dm_bold_date", "dm_bold_date_var"),
+            ("dm_bold_batch", "dm_bold_batch_var"),
+            ("dm_bold_code", "dm_bold_code_var"),
+        ):
+            try:
+                if plain_key in data:
+                    getattr(self, var_name).set(bool(data[plain_key]))
+            except Exception:
+                pass
+        for plain_key, var_name in (
+            ("dm_size_name", "dm_size_name_var"),
+            ("dm_size_date", "dm_size_date_var"),
+            ("dm_size_batch", "dm_size_batch_var"),
+            ("dm_size_code", "dm_size_code_var"),
+        ):
+            try:
+                if isinstance(data.get(plain_key), str):
+                    getattr(self, var_name).set(data[plain_key])
+            except Exception:
+                pass
+
+        # сохранённые шаблоны этикеток
+        saved_profiles = data.get("profiles")
+        if isinstance(saved_profiles, dict):
+            self._profiles = {
+                str(name): dict(profile)
+                for name, profile in saved_profiles.items()
+                if isinstance(profile, dict)
+            }
+
     def _save_config(self) -> None:
         cfg = config_path()
         data = {
@@ -2156,6 +2979,15 @@ class ConverterGui:
             "dm_show_batch": bool(self.dm_show_batch_var.get()),
             "dm_show_code": bool(self.dm_show_code_var.get()),
             "dm_show_short": bool(self.dm_show_short_var.get()),
+            "dm_bold_name": bool(self.dm_bold_name_var.get()),
+            "dm_bold_date": bool(self.dm_bold_date_var.get()),
+            "dm_bold_batch": bool(self.dm_bold_batch_var.get()),
+            "dm_bold_code": bool(self.dm_bold_code_var.get()),
+            "dm_size_name": self.dm_size_name_var.get(),
+            "dm_size_date": self.dm_size_date_var.get(),
+            "dm_size_batch": self.dm_size_batch_var.get(),
+            "dm_size_code": self.dm_size_code_var.get(),
+            "profiles": self._profiles,
         }
         try:
             with open(cfg, "w", encoding="utf-8") as fh:
