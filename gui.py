@@ -10,6 +10,9 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
+from version import APP_VERSION
+from updater import check_for_update, run_self_update
+
 from converter import (
     ConversionCancelled,
     ConversionError,
@@ -122,7 +125,7 @@ def _split_drop_paths(data: str) -> list[str]:
 class ConverterGui:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("GS1 DataMatrix: PDF в CSV")
+        self.root.title(f"Delfin Маркировка v{APP_VERSION}")
         self.root.geometry("1440x820")
         self.root.minsize(1240, 680)
         self.root.maxsize(2000, 1200)
@@ -170,6 +173,7 @@ class ConverterGui:
         self._generating = False
 
         self._load_config()
+        self._build_menu()
         self._build_ui()
         self._apply_theme()
         self._setup_dnd()
@@ -177,6 +181,7 @@ class ConverterGui:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(100, self._drain_events)
         self.root.after(200, self._enable_copy_menus)
+        self.root.after(1500, self._check_updates_automatic)
 
     def _set_window_icon(self) -> None:
         base_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
@@ -185,6 +190,120 @@ class ConverterGui:
             try:
                 self.root.iconbitmap(str(icon_path))
             except tk.TclError:
+                pass
+
+    def _build_menu(self) -> None:
+        """Создаёт верхнее меню (шапку) окна: Файл, Вид, Справка с обновлениями."""
+        menubar = tk.Menu(self.root)
+
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="Выход", command=self._on_close)
+        menubar.add_cascade(label="Файл", menu=file_menu)
+
+        view_menu = tk.Menu(menubar, tearoff=0)
+        view_menu.add_checkbutton(label="Тёмная тема", variable=self.dark_var,
+                                  command=self._apply_theme)
+        menubar.add_cascade(label="Вид", menu=view_menu)
+
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label="Проверить обновления", command=self._check_updates_manual)
+        help_menu.add_separator()
+        help_menu.add_command(label="О программе", command=self._show_about)
+        menubar.add_cascade(label="Справка", menu=help_menu)
+
+        self.root.config(menu=menubar)
+
+    def _show_about(self) -> None:
+        """Показывает окно «О программе»: версия и журнал изменений."""
+        win = tk.Toplevel(self.root)
+        win.title("О программе")
+        win.resizable(False, False)
+        win.transient(self.root)
+        win.grab_set()
+
+        title = f"Delfin Маркировка\nверсия {APP_VERSION}"
+        desc = ("Конвертация кодов маркировки GS1 DataMatrix «Честный знак»:\n"
+                "PDF → CSV и CSV → этикетки с DataMatrix.")
+
+        header = tk.Label(win, text=title, font=("Arial", 12, "bold"),
+                          justify="center")
+        header.pack(pady=(12, 0), padx=16)
+        info = tk.Label(win, text=desc, font=("Arial", 9),
+                        justify="center", fg="#555555")
+        info.pack(pady=(4, 8), padx=16)
+
+        tk.Label(win, text="Изменения по версиям:", font=("Arial", 9, "bold")
+                 ).pack(anchor="w", padx=16)
+        text = scrolledtext.ScrolledText(
+            win, wrap="word", width=70, height=14, font=("Consolas", 9))
+        text.pack(padx=16, pady=(4, 8))
+        text.insert("1.0", self._changelog_text())
+        text.configure(state="disabled")
+
+        tk.Button(win, text="Закрыть", width=14,
+                  command=win.destroy).pack(pady=(0, 12))
+
+    @staticmethod
+    def _changelog_text() -> str:
+        """Текст журнала изменений для окна «О программе»."""
+        return (
+            "v1.2.0 — верхнее меню «Справка → О программе» с версией и журналом изменений.\n"
+            "\n"
+            "v1.1.1 — исправлено «Не найден zint.exe» (zint упакован в EXE);\n"
+            "        версия в заголовке окна и в свойствах EXE.\n"
+            "\n"
+            "v1.1.0 — дизайнер этикеток, проверка кодов, предпросмотр,\n"
+            "        профили, печать, прогресс-бар.\n"
+            "\n"
+            "v1.0.0 — первая версия: PDF → CSV, CSV → этикетки.\n"
+        )
+
+    def _check_updates_manual(self) -> None:
+        """Пункт меню: проверить наличие новой версии и, если есть, обновить."""
+        self._run_update_check(manual=True)
+
+    def _check_updates_automatic(self) -> None:
+        """Автопроверка обновлений при старте (тихая, без всплывающих окон)."""
+        self._run_update_check(manual=False)
+
+    def _run_update_check(self, manual: bool) -> None:
+        """Выполняет проверку обновлений в фоновом потоке."""
+        def work() -> None:
+            update = check_for_update()
+            if update is None:
+                if manual:
+                    self.root.after(0, lambda: messagebox.showinfo(
+                        "Обновления", f"У вас установлена последняя версия (v{APP_VERSION})."))
+                return
+            if manual:
+                self.root.after(0, lambda: self._ask_update(update))
+            else:
+                # при автоматической проверке просто показываем уведомление
+                self.root.after(0, lambda: self._ask_update(update))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _ask_update(self, update: dict) -> None:
+        """Спрашивает пользователя, обновляться ли. При согласии — запускает обновление."""
+        notes = (update.get("notes") or "").strip()
+        msg = (f"Доступна новая версия v{update.get('version')}.\n"
+               f"Текущая версия: v{APP_VERSION}\n")
+        if notes:
+            msg += f"\nЧто нового:\n{notes}\n"
+        msg += "\nСкачать и установить обновление сейчас?"
+        if not messagebox.askyesno("Обновление программы", msg):
+            return
+        err = run_self_update(update["url"])
+        if err:
+            messagebox.showerror("Обновление", err)
+        else:
+            messagebox.showinfo(
+                "Обновление",
+                "Обновление запущено. Программа закроется, загрузит новую "
+                "версию и откроется автоматически.")
+            try:
+                self.root.destroy()
+            except Exception:
                 pass
 
     def _enable_copy_menus(self) -> None:
@@ -436,7 +555,7 @@ class ConverterGui:
         topbar = ttk.Frame(root_container)
         topbar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
         topbar.columnconfigure(1, weight=1)
-        ttk.Label(topbar, text="delfin PDF_DM_CSV", font=("Segoe UI", 12, "bold")).grid(
+        ttk.Label(topbar, text="Delfin Маркировка", font=("Segoe UI", 12, "bold")).grid(
             row=0, column=0, sticky="w", padx=(2, 10)
         )
         self.dark_check = ttk.Checkbutton(
@@ -1738,7 +1857,7 @@ class ConverterGui:
                     png_path = Path(td) / f"{idx}.png"
                     proc = subprocess.run(
                         [str(zint_exe), "-b", "DATAMATRIX", "--gs1", "--gssep",
-                         f"--scale={scale}", "-d", zint_data,
+                         "--square", f"--scale={scale}", "-d", zint_data,
                          "-o", str(png_path)],
                         capture_output=True, text=True,
                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -1965,7 +2084,7 @@ class ConverterGui:
                     png_path = Path(td) / "dm.png"
                     proc = subprocess.run(
                         [str(zint_exe), "-b", "DATAMATRIX", "--gs1", "--gssep",
-                         f"--scale=8", "-d", data, "-o", str(png_path)],
+                         "--square", f"--scale=8", "-d", data, "-o", str(png_path)],
                         capture_output=True, text=True,
                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                     )

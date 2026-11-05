@@ -531,8 +531,9 @@ def gs1data_to_zint_data(full_code: str) -> str:
 
 
 def code_identification(full_code: str) -> str:
-    """Возвращает укороченный код идентификации (01+GTIN+21+серия)
-    из полного кода маркировки. Без криптохвоста (91/92)."""
+    """Возвращает укороченный код (01+GTIN+21+серия [GS] 91+ключ)
+    из полного кода маркировки. Блок 91 берётся как есть, криптоблок 92
+    отбрасывается."""
     parts = full_code.split(GS_CHAR)
     serial = ""
     rest = full_code
@@ -545,6 +546,11 @@ def code_identification(full_code: str) -> str:
         serial = rest[2:]
         if GS_CHAR in serial:
             serial = serial.split(GS_CHAR, 1)[0]
+    key91 = ""
+    if len(parts) >= 2 and parts[1].startswith("91"):
+        key91 = parts[1][2:]
+    if key91:
+        return f"01{gtin}21{serial}{GS_CHAR}91{key91}"
     return f"01{gtin}21{serial}"
 
 
@@ -562,8 +568,9 @@ def is_code_truncated(code: str) -> bool:
 
 
 def gs1data_to_zint_from_short(short_code: str) -> str:
-    """Строит Zint-данные для укороченного кода (01+GTIN+21+серия)
-    в квадратных скобках — без криптохвоста."""
+    """Строит Zint-данные для укороченного кода (01+GTIN+21+серия [GS] 91+ключ)
+    в квадратных скобках — блок 91 берётся как есть, крипто 92 отбрасывается."""
+    parts = short_code.split(GS_CHAR)
     gtin = ""
     serial = ""
     rest = short_code
@@ -574,6 +581,11 @@ def gs1data_to_zint_from_short(short_code: str) -> str:
         serial = rest[2:]
         if GS_CHAR in serial:
             serial = serial.split(GS_CHAR, 1)[0]
+    key91 = ""
+    if len(parts) >= 2 and parts[1].startswith("91"):
+        key91 = parts[1][2:]
+    if key91:
+        return f"[01]{gtin}[21]{serial}[91]{key91}"
     return f"[01]{gtin}[21]{serial}"
 
 
@@ -731,7 +743,7 @@ def build_label_page(
         proc = subprocess.run(
             [
                 str(zint_exe), "-b", "DATAMATRIX", "--gs1", "--gssep",
-                f"--scale={scale}", "-d", zint_data,
+                "--square", f"--scale={scale}", "-d", zint_data,
                 "-o", str(png_path),
             ],
             capture_output=True,
@@ -1080,7 +1092,7 @@ def generate_codes_pdf(
                 proc = subprocess.run(
                     [
                         str(zint_exe), "-b", "DATAMATRIX", "--gs1", "--gssep",
-                        f"--scale={scale}", "-d", zint_data,
+                        "--square", f"--scale={scale}", "-d", zint_data,
                         "-o", str(png_path),
                     ],
                     capture_output=True,
