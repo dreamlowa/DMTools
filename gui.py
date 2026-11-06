@@ -3367,7 +3367,52 @@ class ConverterGui:
         self.root.destroy()
 
 
+def _global_excepthook(exc_type, exc_value, exc_tb) -> None:
+    """Глобальный перехват необработанных исключений: пишет в лог-файл и
+    показывает окно с ошибкой и кнопкой «Скопировать»."""
+    import traceback as _tb
+    import tkinter as _tk
+    text = "".join(_tb.format_exception(exc_type, exc_value, exc_tb))
+    try:
+        with open(log_file_path(), "a", encoding="utf-8") as _fh:
+            _fh.write("\n===== НЕОБРАБОТАННАЯ ОШИБКА =====\n" + text + "\n")
+    except Exception:
+        pass
+    try:
+        root = getattr(_tk._default_root, "winfo_toplevel", lambda: None)()
+    except Exception:
+        root = None
+    win_tk = root if root is not None else _tk.Tk()
+    win_tk.withdraw()
+    top = _tk.Toplevel(win_tk)
+    top.title("Ошибка программы")
+    top.transient(win_tk)
+    top.grab_set()
+    _tk.Label(top, text="Ошибка программы. Подробности ниже — скопируйте их "
+                        "и отправьте разработчику:").pack(padx=12, pady=(10, 4))
+    txt = _tk.Text(top, width=80, height=12, font=("Consolas", 9))
+    txt.insert("1.0", text)
+    txt.configure(state="disabled")
+    txt.pack(padx=12, pady=4)
+    btns = _tk.Frame(top)
+    btns.pack(pady=8)
+    def _copy() -> None:
+        try:
+            win_tk.clipboard_clear()
+            win_tk.clipboard_append(text)
+            _lbl.config(text="Скопировано в буфер обмена.")
+        except Exception:
+            pass
+    _btn = _tk.Button(btns, text="Скопировать ошибку", command=_copy)
+    _btn.pack(side="left", padx=6)
+    _lbl = _tk.Label(btns, text="")
+    _lbl.pack(side="left", padx=6)
+    _tk.Button(btns, text="Закрыть", command=top.destroy).pack(side="left", padx=6)
+    win_tk.deiconify()
+
 def run_gui() -> None:
+    import sys as _sys
+    _sys.excepthook = _global_excepthook
     try:
         from tkinterdnd2 import TkinterDnD
 
