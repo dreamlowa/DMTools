@@ -125,7 +125,7 @@ def _split_drop_paths(data: str) -> list[str]:
 class ConverterGui:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title(f"Delfin Маркировка v{APP_VERSION}")
+        self.root.title(f"DMTools v{APP_VERSION}")
         self.root.geometry("1440x820")
         self.root.minsize(1240, 680)
         self.root.maxsize(2000, 1200)
@@ -242,7 +242,7 @@ class ConverterGui:
         win.transient(self.root)
         win.grab_set()
 
-        title = f"Delfin Маркировка\nверсия {APP_VERSION}"
+        title = f"DMTools\nверсия {APP_VERSION}"
         desc = ("Конвертация кодов маркировки GS1 DataMatrix «Честный знак»:\n"
                 "PDF → CSV и CSV → этикетки с DataMatrix.")
 
@@ -1004,14 +1004,22 @@ class ConverterGui:
         qrow = ttk.Frame(tab4)
         qrow.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 8))
         qrow.columnconfigure(0, weight=1)
-        self.quick_code_entry = ttk.Entry(qrow, textvariable=self.quick_code_var)
-        self.quick_code_entry.grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        self.quick_code_entry.bind("<KeyRelease>", self._on_quick_code_change)
-        self.quick_code_entry.bind("<Return>", self._quick_generate)
+        ttk.Label(qrow, text="Код маркировки:").grid(
+            row=0, column=0, sticky="w", pady=(0, 4))
+        # многострочное поле — длинный код «Честного знака» не обрезается
+        self.quick_code_text = scrolledtext.ScrolledText(
+            qrow, height=4, wrap="none", width=70
+        )
+        self.quick_code_text.grid(row=1, column=0, sticky="ew", padx=(0, 6))
+        self.quick_code_text.bind("<KeyRelease>", self._on_quick_code_change)
+        self.quick_code_text.bind("<Control-Return>", self._quick_generate)
         ttk.Button(qrow, text="Проверить", command=self._quick_generate).grid(
-            row=0, column=1, padx=(0, 6))
-        ttk.Button(qrow, text="Очистить", command=self._quick_clear).grid(
-            row=0, column=2)
+            row=2, column=0, sticky="w", padx=(0, 6), pady=(6, 0))
+        # текст кода — только первая строка: код всегда один
+        self.quick_code_text.bind(
+            "<Return>",
+            lambda _e: "break",
+        )
 
         ttk.Label(tab4, textvariable=self.quick_status_var).grid(
             row=2, column=0, columnspan=3, sticky="w", pady=(0, 8))
@@ -1739,6 +1747,13 @@ class ConverterGui:
         code = code.replace("\u29f8", "\x1d").replace("<>", "\x1d").replace("<GS>", "\x1d")
         return code
 
+    def _quick_code_get(self) -> str:
+        """Читает введённый код из многострочного поля (берёт первую строку)."""
+        if not hasattr(self, "quick_code_text"):
+            return self.quick_code_var.get()
+        text = self.quick_code_text.get("1.0", "end-1c")
+        return text.splitlines()[0] if text.splitlines() else ""
+
     def _on_quick_code_change(self, _event: object = None) -> None:
         """При вводе кода сбрасываем статус и убираем прежний предпросмотр."""
         self.quick_status_var.set("Вставьте код маркировки и нажмите «Проверить»")
@@ -1747,7 +1762,10 @@ class ConverterGui:
 
     def _quick_clear(self) -> None:
         """Очищает поле ввода, статус и предпросмотр."""
-        self.quick_code_var.set("")
+        if hasattr(self, "quick_code_text"):
+            self.quick_code_text.delete("1.0", "end")
+        else:
+            self.quick_code_var.set("")
         self.quick_status_var.set("Вставьте код маркировки и нажмите «Проверить»")
         self.quick_preview_canvas.delete("all")
         self._quick_image_ref = None
@@ -1755,7 +1773,7 @@ class ConverterGui:
     def _quick_generate(self) -> None:
         """Проверяет введённый код и показывает DataMatrix 25×25 мм в 100% масштабе."""
         from converter import validate_code_structure, gs1data_to_zint_from_short, find_zint_exe
-        code = self._clean_code_input(self.quick_code_var.get())
+        code = self._clean_code_input(self._quick_code_get())
         if not code:
             self.quick_status_var.set("Пустой код. Вставьте код маркировки.")
             return

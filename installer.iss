@@ -1,9 +1,9 @@
-; Скрипт установки для Inno Setup
+﻿; Скрипт установки для Inno Setup
 ; Компиляция: ISCC.exe installer.iss
 
-#define AppName "Delfin Маркировка"
-#define AppVersion "1.7.0"
-#define AppExe "PDFDataMatrixToCSV.exe"
+#define AppName "DMTools"
+#define AppVersion "1.8.0"
+#define AppExe "DMTools.exe"
 
 [Setup]
 AppId={{9F4E2C1A-5B31-4C8E-9A2D-7F3B2C0A6D11}
@@ -12,11 +12,11 @@ AppVersion={#AppVersion}
 AppPublisher=Лев Чугунов
 AppPublisherURL=
 AppVerName={#AppName} {#AppVersion}
-DefaultDirName={localappdata}\Programs\Delfin Маркировка
+DefaultDirName={localappdata}\Programs\DMTools
 DisableProgramGroupPage=yes
-DefaultGroupName=Delfin Маркировка
+DefaultGroupName=DMTools
 OutputDir=output
-OutputBaseFilename=delfin_PDF_DM_CSV_setup
+OutputBaseFilename=dmtools_setup
 SetupIconFile=centrdelfin.ico
 UninstallDisplayIcon={app}\{#AppExe}
 Compression=lzma2

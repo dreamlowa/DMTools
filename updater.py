@@ -5,7 +5,7 @@
 
     {
       "version": "1.5.0",
-      "url": "https://github.com/USER/REPO/releases/download/v1.5.0/PDFDataMatrixToCSV.exe",
+      "url": "https://github.com/USER/REPO/releases/download/v1.5.0/DMTools.exe",
       "notes": "Краткое описание изменений"
     }
 

@@ -1,14 +1,14 @@
-"""Вспомогательный процесс самообновления приложения.
+﻿"""Р’СЃРїРѕРјРѕРіР°С‚РµР»СЊРЅС‹Р№ РїСЂРѕС†РµСЃСЃ СЃР°РјРѕРѕР±РЅРѕРІР»РµРЅРёСЏ РїСЂРёР»РѕР¶РµРЅРёСЏ.
 
-Запускается основным приложением (updater.run_self_update) со следующими
-аргументами:
-    updater_helper.exe <путь_к_текущему_EXE> <URL_нового_EXE>
+Р—Р°РїСѓСЃРєР°РµС‚СЃСЏ РѕСЃРЅРѕРІРЅС‹Рј РїСЂРёР»РѕР¶РµРЅРёРµРј (updater.run_self_update) СЃРѕ СЃР»РµРґСѓСЋС‰РёРјРё
+Р°СЂРіСѓРјРµРЅС‚Р°РјРё:
+    updater_helper.exe <РїСѓС‚СЊ_Рє_С‚РµРєСѓС‰РµРјСѓ_EXE> <URL_РЅРѕРІРѕРіРѕ_EXE>
 
-Задача: скачать новый EXE во временную папку, дождаться, пока основной
-процесс завершится, подменить файл приложения и перезапустить его.
+Р—Р°РґР°С‡Р°: СЃРєР°С‡Р°С‚СЊ РЅРѕРІС‹Р№ EXE РІРѕ РІСЂРµРјРµРЅРЅСѓСЋ РїР°РїРєСѓ, РґРѕР¶РґР°С‚СЊСЃСЏ, РїРѕРєР° РѕСЃРЅРѕРІРЅРѕР№
+РїСЂРѕС†РµСЃСЃ Р·Р°РІРµСЂС€РёС‚СЃСЏ, РїРѕРґРјРµРЅРёС‚СЊ С„Р°Р№Р» РїСЂРёР»РѕР¶РµРЅРёСЏ Рё РїРµСЂРµР·Р°РїСѓСЃС‚РёС‚СЊ РµРіРѕ.
 
-Это отдельный исполняемый файл, поэтому может перезаписать EXE, пока
-основное приложение запущено.
+Р­С‚Рѕ РѕС‚РґРµР»СЊРЅС‹Р№ РёСЃРїРѕР»РЅСЏРµРјС‹Р№ С„Р°Р№Р», РїРѕСЌС‚РѕРјСѓ РјРѕР¶РµС‚ РїРµСЂРµР·Р°РїРёСЃР°С‚СЊ EXE, РїРѕРєР°
+РѕСЃРЅРѕРІРЅРѕРµ РїСЂРёР»РѕР¶РµРЅРёРµ Р·Р°РїСѓС‰РµРЅРѕ.
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def download(url: str, dest: Path) -> bool:
 
 
 def wait_for_app_exit(exe_path: Path, timeout: float = 120.0) -> None:
-    """Ждёт, пока процесс приложения завершится. Файл можно будет перезаписать."""
+    """Р–РґС‘С‚, РїРѕРєР° РїСЂРѕС†РµСЃСЃ РїСЂРёР»РѕР¶РµРЅРёСЏ Р·Р°РІРµСЂС€РёС‚СЃСЏ. Р¤Р°Р№Р» РјРѕР¶РЅРѕ Р±СѓРґРµС‚ РїРµСЂРµР·Р°РїРёСЃР°С‚СЊ."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -45,11 +45,11 @@ def wait_for_app_exit(exe_path: Path, timeout: float = 120.0) -> None:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 text=True,
             ).splitlines()[1:]:
-                # имя, pid, сессия ...
+                # РёРјСЏ, pid, СЃРµСЃСЃРёСЏ ...
                 if exe_path.name.lower() in proc.lower():
                     break
             else:
-                return  # процесс не найден — можно обновлять
+                return  # РїСЂРѕС†РµСЃСЃ РЅРµ РЅР°Р№РґРµРЅ вЂ” РјРѕР¶РЅРѕ РѕР±РЅРѕРІР»СЏС‚СЊ
         except Exception:
             pass
         time.sleep(1.0)
@@ -63,14 +63,14 @@ def main() -> int:
 
     tmp = Path(tempfile.gettempdir()) / "delfin_update"
     tmp.mkdir(parents=True, exist_ok=True)
-    new_exe = tmp / "PDFDataMatrixToCSV_new.exe"
+    new_exe = tmp / "DMTools_new.exe"
 
     if not download(url, new_exe):
         return 2
 
     wait_for_app_exit(exe)
 
-    # подменяем файл приложения
+    # РїРѕРґРјРµРЅСЏРµРј С„Р°Р№Р» РїСЂРёР»РѕР¶РµРЅРёСЏ
     try:
         if exe.exists():
             exe.unlink()
@@ -78,7 +78,7 @@ def main() -> int:
     except Exception:
         return 3
 
-    # перезапускаем приложение
+    # РїРµСЂРµР·Р°РїСѓСЃРєР°РµРј РїСЂРёР»РѕР¶РµРЅРёРµ
     try:
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         subprocess.Popen([str(exe)], creationflags=creationflags, close_fds=True)

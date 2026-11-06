@@ -1,4 +1,4 @@
-# Delfin Маркировка
+# DMTools
 
 Автономное GUI-приложение для извлечения кодов GS1 DataMatrix «Честный знак» из PDF в CSV и генерации этикеток.
 
@@ -42,7 +42,7 @@ powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
 Готовый файл появится здесь:
 
 ```text
-dist\PDFDataMatrixToCSV.exe
+dist\DMTools.exe
 ```
 
 На компьютере пользователя Python и библиотеки не требуются.
