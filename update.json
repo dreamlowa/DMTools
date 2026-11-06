@@ -1,5 +1,5 @@
 {
-  "version": "1.6.2",
-  "url": "https://github.com/dreamlowa/delfin-etiketki/releases/download/v1.6.2/PDFDataMatrixToCSV.exe",
+  "version": "1.6.3",
+  "url": "https://github.com/dreamlowa/delfin-etiketki/releases/download/v1.6.3/PDFDataMatrixToCSV.exe",
   "notes": "Добавлено самообновление: программа теперь проверяет наличие новой версии на GitHub и может обновляться сама."
 }

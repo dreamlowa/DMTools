@@ -35,7 +35,7 @@ def download(url: str, dest: Path) -> bool:
         return False
 
 
-def wait_for_app_exit(exe_path: Path, pid_hint: str, timeout: float = 120.0) -> None:
+def wait_for_app_exit(exe_path: Path, timeout: float = 120.0) -> None:
     """Ждёт, пока процесс приложения завершится. Файл можно будет перезаписать."""
     deadline = time.time() + timeout
     while time.time() < deadline:
