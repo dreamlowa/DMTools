@@ -593,6 +593,13 @@ class ConverterGui:
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(1, weight=1)
         self._header_photo = None
+        # цвет фона шапки берём из текущей темы, чтобы label не имел пустого bg
+        try:
+            style = ttk.Style(self.root)
+            hdr_bg = style.lookup("TFrame", "background") or "#f0f0f0"
+            hdr_fg = style.lookup("TLabel", "foreground") or "#000000"
+        except Exception:
+            hdr_bg, hdr_fg = "#f0f0f0", "#000000"
         try:
             base_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
             icon_path = base_dir / "centrdelfin.ico"
@@ -602,14 +609,15 @@ class ConverterGui:
                 img.thumbnail((28, 28))
                 self._header_photo = ImageTk.PhotoImage(img)
                 self._header_logo = tk.Label(
-                    header, image=self._header_photo, bg="",
+                    header, image=self._header_photo, bg=hdr_bg,
                     relief="flat",
                 )
                 self._header_logo.grid(row=0, column=0, padx=(2, 8))
         except Exception:
             pass
         self._header_title = tk.Label(
-            header, text="DMTools", font=("Segoe UI", 13, "bold"), bg="",
+            header, text="DMTools", font=("Segoe UI", 13, "bold"),
+            bg=hdr_bg, fg=hdr_fg,
         )
         self._header_title.grid(row=0, column=1, sticky="w")
 

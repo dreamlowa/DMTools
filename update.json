@@ -1,5 +1,5 @@
 {
-  "version": "1.8.3",
-  "url": "https://github.com/dreamlowa/delfin-etiketki/releases/download/v1.8.3/DMTools.exe",
+  "version": "1.8.4",
+  "url": "https://github.com/dreamlowa/delfin-etiketki/releases/download/v1.8.4/DMTools.exe",
   "notes": "Добавлено самообновление: программа теперь проверяет наличие новой версии на GitHub и может обновляться сама."
 }
