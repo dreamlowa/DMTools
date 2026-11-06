@@ -552,6 +552,16 @@ class ConverterGui:
                 self.drop_zone.configure(bg=field, fg=fg)
             except Exception:
                 pass
+        if hasattr(self, "_header_title"):
+            try:
+                self._header_title.configure(bg=bg, fg=fg)
+            except Exception:
+                pass
+        if hasattr(self, "_header_logo"):
+            try:
+                self._header_logo.configure(bg=bg)
+            except Exception:
+                pass
 
         for widget in self.root.winfo_children():
             self._refresh_style(widget)
@@ -575,18 +585,45 @@ class ConverterGui:
         for child in widget.winfo_children():
             self._refresh_style(child)
 
+    def _build_header(self, parent: ttk.Frame) -> None:
+        """Компактная верхняя панель с логотипом и названием «DMTools»."""
+        header = ttk.Frame(parent, padding=(8, 4))
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(1, weight=1)
+        self._header_photo = None
+        try:
+            base_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+            icon_path = base_dir / "centrdelfin.ico"
+            if icon_path.is_file():
+                from PIL import Image, ImageTk
+                img = Image.open(str(icon_path)).convert("RGBA")
+                img.thumbnail((28, 28))
+                self._header_photo = ImageTk.PhotoImage(img)
+                self._header_logo = tk.Label(
+                    header, image=self._header_photo, bg="",
+                    relief="flat",
+                )
+                self._header_logo.grid(row=0, column=0, padx=(2, 8))
+        except Exception:
+            pass
+        self._header_title = tk.Label(
+            header, text="DMTools", font=("Segoe UI", 13, "bold"), bg="",
+        )
+        self._header_title.grid(row=0, column=1, sticky="w")
+
     def _build_ui(self) -> None:
         root_container = ttk.Frame(self.root, padding=8)
         root_container.grid(row=0, column=0, sticky="nsew")
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
 
-        # Верхняя панель с заголовком убрана: имя и тема продублированы в меню.
+        # Верхняя панель с заголовком и логотипом
+        self._build_header(root_container)
         self.dark_check = None
 
         self.notebook = ttk.Notebook(root_container)
-        self.notebook.grid(row=0, column=0, sticky="nsew")
-        root_container.rowconfigure(0, weight=1)
+        self.notebook.grid(row=1, column=0, sticky="nsew")
+        root_container.rowconfigure(1, weight=1)
 
         # --- Вкладка 1: PDF -> CSV ---
         tab1 = ttk.Frame(self.notebook, padding=10)
