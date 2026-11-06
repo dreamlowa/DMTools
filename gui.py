@@ -200,6 +200,21 @@ class ConverterGui:
         file_menu.add_command(label="Выход", command=self._on_close)
         menubar.add_cascade(label="Файл", menu=file_menu)
 
+        tools_menu = tk.Menu(menubar, tearoff=0)
+        tools_csv = tk.Menu(tools_menu, tearoff=0)
+        tools_csv.add_command(label="PDF → CSV", command=self._start)
+        tools_csv.add_command(label="Остановить", command=self._stop)
+        tools_csv.add_command(label="Открыть папку", command=self._open_output_folder)
+        tools_csv.add_command(label="Выгрузить Excel", command=self._export_excel)
+        tools_menu.add_cascade(label="PDF → CSV", menu=tools_csv)
+        tools_dm = tk.Menu(tools_menu, tearoff=0)
+        tools_dm.add_command(label="Сгенерировать PDF", command=self._generate_dm_pdf)
+        tools_dm.add_command(label="Печать", command=self._print_dm_pdf)
+        tools_dm.add_command(label="Экспорт PNG", command=self._export_dm_png)
+        tools_dm.add_command(label="Открыть папку", command=self._open_dm_output_folder)
+        tools_menu.add_cascade(label="CSV → этикетки", menu=tools_dm)
+        menubar.add_cascade(label="Инструменты", menu=tools_menu)
+
         view_menu = tk.Menu(menubar, tearoff=0)
         view_menu.add_checkbutton(label="Тёмная тема", variable=self.dark_var,
                                   command=self._apply_theme)
@@ -551,22 +566,12 @@ class ConverterGui:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
 
-        # Общая верхняя панель: заголовок + тёмная тема (для всего окна)
-        topbar = ttk.Frame(root_container)
-        topbar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
-        topbar.columnconfigure(1, weight=1)
-        ttk.Label(topbar, text="Delfin Маркировка", font=("Segoe UI", 12, "bold")).grid(
-            row=0, column=0, sticky="w", padx=(2, 10)
-        )
-        self.dark_check = ttk.Checkbutton(
-            topbar, text="Тёмная тема",
-            variable=self.dark_var, command=self._apply_theme,
-        )
-        self.dark_check.grid(row=0, column=1, sticky="e", padx=(10, 2))
+        # Верхняя панель с заголовком убрана: имя и тема продублированы в меню.
+        self.dark_check = None
 
         self.notebook = ttk.Notebook(root_container)
-        self.notebook.grid(row=1, column=0, sticky="nsew")
-        root_container.rowconfigure(1, weight=1)
+        self.notebook.grid(row=0, column=0, sticky="nsew")
+        root_container.rowconfigure(0, weight=1)
 
         # --- Вкладка 1: PDF -> CSV ---
         tab1 = ttk.Frame(self.notebook, padding=10)
