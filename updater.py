@@ -68,15 +68,28 @@ def fetch_manifest(timeout: int = 15) -> dict | None:
         return None
 
 
-def check_for_update(manifest: dict | None = None) -> dict | None:
-    """Возвращает dict обновления ({version,url,notes}), если есть новая версия,
-    иначе None."""
+def check_for_update(manifest: dict | None = None) -> dict:
+    """Проверяет, доступно ли обновление.
+
+    Возвращает dict вида:
+      {"status": "ok", "update": {...} | None, "current": "1.8.2",
+       "latest": "1.8.2" | None}
+    либо {"status": "error", "message": "..."} при сбое сети/разбора.
+
+    Ключ "update" содержит манифест, только если найдена более новая версия.
+    """
     m = manifest if manifest is not None else fetch_manifest()
     if not m:
-        return None
-    if is_newer(m.get("version", ""), APP_VERSION):
-        return m
-    return None
+        return {
+            "status": "error",
+            "message": "Не удалось получить данные об обновлениях. "
+                       "Проверьте подключение к интернету и попробуйте снова.",
+        }
+    latest = m.get("version", "")
+    current = APP_VERSION
+    if is_newer(latest, current):
+        return {"status": "ok", "update": m, "current": current, "latest": latest}
+    return {"status": "ok", "update": None, "current": current, "latest": latest}
 
 
 def app_exe_path() -> Path:

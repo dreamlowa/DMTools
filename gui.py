@@ -299,17 +299,19 @@ class ConverterGui:
     def _run_update_check(self, manual: bool) -> None:
         """Выполняет проверку обновлений в фоновом потоке."""
         def work() -> None:
-            update = check_for_update()
+            result = check_for_update()
+            if result.get("status") == "error":
+                if manual:
+                    self.root.after(0, lambda: messagebox.showwarning(
+                        "Обновления", result.get("message", "Не удалось проверить обновления.")))
+                return
+            update = result.get("update")
             if update is None:
                 if manual:
                     self.root.after(0, lambda: messagebox.showinfo(
                         "Обновления", f"У вас установлена последняя версия (v{APP_VERSION})."))
                 return
-            if manual:
-                self.root.after(0, lambda: self._ask_update(update))
-            else:
-                # при автоматической проверке просто показываем уведомление
-                self.root.after(0, lambda: self._ask_update(update))
+            self.root.after(0, lambda: self._ask_update(update))
 
         threading.Thread(target=work, daemon=True).start()
 
