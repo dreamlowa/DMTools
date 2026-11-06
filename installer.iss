@@ -2,7 +2,7 @@
 ; Компиляция: ISCC.exe installer.iss
 
 #define AppName "Delfin Маркировка"
-#define AppVersion "1.6.1"
+#define AppVersion "1.6.2"
 #define AppExe "PDFDataMatrixToCSV.exe"
 
 [Setup]

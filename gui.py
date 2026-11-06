@@ -197,6 +197,9 @@ class ConverterGui:
         menubar = tk.Menu(self.root)
 
         file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="Открыть PDF с этикетками", command=self._open_dm_pdf)
+        file_menu.add_command(label="Открыть папку с результатами", command=self._open_output_folder)
+        file_menu.add_separator()
         file_menu.add_command(label="Выход", command=self._on_close)
         menubar.add_cascade(label="Файл", menu=file_menu)
 
