@@ -7,3 +7,4 @@ tmp/
 *.spec
 __pycache__/
 *.pyc
+.gigatool/
