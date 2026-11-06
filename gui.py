@@ -224,6 +224,15 @@ class ConverterGui:
         view_menu = tk.Menu(menubar, tearoff=0)
         view_menu.add_checkbutton(label="Тёмная тема", variable=self.dark_var,
                                   command=self._apply_theme)
+        view_menu.add_separator()
+        view_menu.add_command(label="PDF → CSV",
+                              command=lambda: self._activate_tab("PDF → CSV"))
+        view_menu.add_command(label="CSV → DataMatrix",
+                              command=lambda: self._activate_tab("CSV → DataMatrix"))
+        view_menu.add_command(label="Предпросмотр",
+                              command=lambda: self._activate_tab("Предпросмотр"))
+        view_menu.add_command(label="Быстрый DataMatrix",
+                              command=lambda: self._activate_tab("Быстрый DataMatrix"))
         menubar.add_cascade(label="Вид", menu=view_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -1028,6 +1037,9 @@ class ConverterGui:
         )
         self.quick_preview_canvas.grid(row=3, column=0, sticky="nsew")
 
+        # перетаскивание вкладок мышкой
+        self._setup_tab_drag()
+
         # после отрисовки всех элементов подгоняем размер окна под содержимое,
         # чтобы ни нижняя, ни правая граница не обрезали контент
         self.root.after(50, self._fit_window)
@@ -1823,9 +1835,54 @@ class ConverterGui:
         self.quick_preview_canvas.create_image(0, 0, image=photo, anchor="nw")
         self.quick_preview_canvas.configure(scrollregion=(0, 0, img.width, img.height))
 
-    def _on_quick_key(self, _event: object) -> None:
-        """Заглушка для поддержки удобства (клавиша Enter запускает проверку)."""
-        self._quick_generate()
+    def _activate_tab(self, tab_text: str) -> None:
+        """Переключает на вкладку по её тексту (для меню «Вид»)."""
+        try:
+            for tab_id in self.notebook.tabs():
+                if self.notebook.tab(tab_id, "text") == tab_text:
+                    self.notebook.select(tab_id)
+                    return
+        except Exception:
+            pass
+
+    def _setup_tab_drag(self) -> None:
+        """Включает перетаскивание вкладок мышкой (drag-and-drop).
+
+        Нажатие на вкладку захватывает её; при движении курсора вкладка
+        вставляется на новое место; отпускание фиксирует порядок.
+        """
+        if not hasattr(self, "notebook"):
+            return
+        self._drag_tab_index: int | None = None
+
+        def _on_tab_press(event) -> None:
+            try:
+                idx = self.notebook.index(f"@{event.x},{event.y}")
+                self._drag_tab_index = idx
+            except Exception:
+                self._drag_tab_index = None
+
+        def _on_tab_motion(event) -> None:
+            idx = self._drag_tab_index
+            if idx is None:
+                return
+            try:
+                target = self.notebook.index(f"@{event.x},{event.y}")
+            except Exception:
+                return
+            if target is None or target == idx:
+                return
+            cur_id = self.notebook.tabs()[idx]
+            self.notebook.insert(target, cur_id)
+            self.notebook.select(target)
+            self._drag_tab_index = target
+
+        def _on_tab_release(_event) -> None:
+            self._drag_tab_index = None
+
+        self.notebook.bind("<Button-1>", _on_tab_press, add="+")
+        self.notebook.bind("<B1-Motion>", _on_tab_motion, add="+")
+        self.notebook.bind("<ButtonRelease-1>", _on_tab_release, add="+")
 
     def _preview_canvas_width(self) -> int:
         """Считывает ширину канваса полного предпросмотра В ГЛАВНОМ потоке
