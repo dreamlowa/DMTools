@@ -175,6 +175,12 @@ class ConverterGui:
         self._last_generated_pdf: str | None = None
         self._generating = False
 
+        # видимость вкладок (галочки в меню «Вид»)
+        self._tab_order = ["PDF → CSV", "CSV → DataMatrix",
+                           "Предпросмотр", "Быстрый DataMatrix"]
+        self._tab_visible = {name: tk.BooleanVar(value=True)
+                             for name in self._tab_order}
+
         self._load_config()
         self._build_menu()
         self._build_ui()
@@ -225,14 +231,18 @@ class ConverterGui:
         view_menu.add_checkbutton(label="Тёмная тема", variable=self.dark_var,
                                   command=self._apply_theme)
         view_menu.add_separator()
-        view_menu.add_command(label="PDF → CSV",
-                              command=lambda: self._activate_tab("PDF → CSV"))
-        view_menu.add_command(label="CSV → DataMatrix",
-                              command=lambda: self._activate_tab("CSV → DataMatrix"))
-        view_menu.add_command(label="Предпросмотр",
-                              command=lambda: self._activate_tab("Предпросмотр"))
-        view_menu.add_command(label="Быстрый DataMatrix",
-                              command=lambda: self._activate_tab("Быстрый DataMatrix"))
+        view_menu.add_checkbutton(
+            label="PDF → CSV", variable=self._tab_visible["PDF → CSV"],
+            command=lambda: self._toggle_tab("PDF → CSV"))
+        view_menu.add_checkbutton(
+            label="CSV → DataMatrix", variable=self._tab_visible["CSV → DataMatrix"],
+            command=lambda: self._toggle_tab("CSV → DataMatrix"))
+        view_menu.add_checkbutton(
+            label="Предпросмотр", variable=self._tab_visible["Предпросмотр"],
+            command=lambda: self._toggle_tab("Предпросмотр"))
+        view_menu.add_checkbutton(
+            label="Быстрый DataMatrix", variable=self._tab_visible["Быстрый DataMatrix"],
+            command=lambda: self._toggle_tab("Быстрый DataMatrix"))
         menubar.add_cascade(label="Вид", menu=view_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -1882,13 +1892,34 @@ class ConverterGui:
         self.quick_preview_canvas.create_image(0, 0, image=photo, anchor="nw")
         self.quick_preview_canvas.configure(scrollregion=(0, 0, img.width, img.height))
 
-    def _activate_tab(self, tab_text: str) -> None:
-        """Переключает на вкладку по её тексту (для меню «Вид»)."""
+    def _toggle_tab(self, tab_text: str) -> None:
+        """Показывает/скрывает вкладку по галочке в меню «Вид».
+
+        Нельзя скрыть последнюю видимую вкладку — иначе окно останется пустым.
+        """
+        var = self._tab_visible.get(tab_text)
+        if var is None:
+            return
         try:
-            for tab_id in self.notebook.tabs():
-                if self.notebook.tab(tab_id, "text") == tab_text:
-                    self.notebook.select(tab_id)
-                    return
+            shown = [t for t in self._tab_order if self._tab_visible[t].get()]
+            if not var.get() and len(shown) <= 1:
+                # не даём снять последнюю видимую вкладку
+                var.set(True)
+                return
+            # находим id вкладки по тексту
+            tab_id = None
+            for tid in self.notebook.tabs():
+                if self.notebook.tab(tid, "text") == tab_text:
+                    tab_id = tid
+                    break
+            if tab_id is None:
+                return
+            if var.get():
+                # показываем: вставляем обратно в правильное место по порядку
+                self.notebook.add(tab_id)
+                self.notebook.select(tab_id)
+            else:
+                self.notebook.hide(tab_id)
         except Exception:
             pass
 
