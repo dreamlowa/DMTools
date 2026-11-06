@@ -60,7 +60,7 @@ def fetch_manifest(timeout: int = 15) -> dict | None:
             UPDATE_MANIFEST_URL, headers={"User-Agent": "delfin-etiketki-updater"}
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            data = json.loads(resp.read().decode("utf-8-sig"))
         if "version" in data and "url" in data:
             return data
         return None
