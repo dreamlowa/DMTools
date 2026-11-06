@@ -168,6 +168,9 @@ class ConverterGui:
         self.dm_size_batch_var = tk.StringVar(value="")
         self.dm_size_code_var = tk.StringVar(value="")
         self.dm_profile_name_var = tk.StringVar(value="")
+        self.quick_code_var = tk.StringVar()
+        self.quick_status_var = tk.StringVar(value="Вставьте код маркировки и нажмите «Проверить»")
+        self._quick_image_ref: object | None = None
         self._profiles: dict[str, dict] = {}
         self._last_generated_pdf: str | None = None
         self._generating = False
@@ -985,6 +988,38 @@ class ConverterGui:
             command=lambda: self._render_full_preview(),
         ).grid(row=0, column=1, sticky="e", pady=(0, 8))
 
+        # --- Вкладка 4: Быстрый DataMatrix (одиночный код для проверки) ---
+        tab4 = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(tab4, text="Быстрый DataMatrix")
+        tab4.columnconfigure(0, weight=1)
+        tab4.rowconfigure(3, weight=1)
+
+        ttk.Label(
+            tab4,
+            text="Вставьте один код маркировки («Честный знак») — программа проверит "
+                 "его структуру и покажет DataMatrix 25×25 мм в полном размере "
+                 "(читается при наведении телефона).",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+
+        qrow = ttk.Frame(tab4)
+        qrow.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        qrow.columnconfigure(0, weight=1)
+        self.quick_code_entry = ttk.Entry(qrow, textvariable=self.quick_code_var)
+        self.quick_code_entry.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self.quick_code_entry.bind("<KeyRelease>", self._on_quick_code_change)
+        self.quick_code_entry.bind("<Return>", self._quick_generate)
+        ttk.Button(qrow, text="Проверить", command=self._quick_generate).grid(
+            row=0, column=1, padx=(0, 6))
+        ttk.Button(qrow, text="Очистить", command=self._quick_clear).grid(
+            row=0, column=2)
+
+        ttk.Label(tab4, textvariable=self.quick_status_var).grid(
+            row=2, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        self.quick_preview_canvas = tk.Canvas(
+            tab4, bg="#ffffff", highlightthickness=0
+        )
+        self.quick_preview_canvas.grid(row=3, column=0, sticky="nsew")
+
         # после отрисовки всех элементов подгоняем размер окна под содержимое,
         # чтобы ни нижняя, ни правая граница не обрезали контент
         self.root.after(50, self._fit_window)
@@ -1695,6 +1730,84 @@ class ConverterGui:
                 }))
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _clean_code_input(self, raw: str) -> str:
+        """Нормализует введённый код: убирает пробелы вокруг и символ разделителя,
+        который пользователь мог вставить как переведённый GS (Unicode) или ASCII."""
+        code = raw.strip()
+        # замена визуальных вариантов разделителя на стандартный GS (\x1d)
+        code = code.replace("\u29f8", "\x1d").replace("<>", "\x1d").replace("<GS>", "\x1d")
+        return code
+
+    def _on_quick_code_change(self, _event: object = None) -> None:
+        """При вводе кода сбрасываем статус и убираем прежний предпросмотр."""
+        self.quick_status_var.set("Вставьте код маркировки и нажмите «Проверить»")
+        self.quick_preview_canvas.delete("all")
+        self._quick_image_ref = None
+
+    def _quick_clear(self) -> None:
+        """Очищает поле ввода, статус и предпросмотр."""
+        self.quick_code_var.set("")
+        self.quick_status_var.set("Вставьте код маркировки и нажмите «Проверить»")
+        self.quick_preview_canvas.delete("all")
+        self._quick_image_ref = None
+
+    def _quick_generate(self) -> None:
+        """Проверяет введённый код и показывает DataMatrix 25×25 мм в 100% масштабе."""
+        from converter import validate_code_structure, gs1data_to_zint_from_short, find_zint_exe
+        code = self._clean_code_input(self.quick_code_var.get())
+        if not code:
+            self.quick_status_var.set("Пустой код. Вставьте код маркировки.")
+            return
+        problems = validate_code_structure(code)
+        if problems:
+            self.quick_status_var.set("Код не прошёл проверку: " + "; ".join(problems))
+        else:
+            self.quick_status_var.set("Код корректен. Генерирую DataMatrix…")
+        self.root.update_idletasks()
+
+        # строим DataMatrix из укороченного кода (01+GTIN+21+серия+91), потому что
+        # именно так код считывается при проверке в «Честном знаке».
+        try:
+            zint_exe = find_zint_exe()
+            if zint_exe is None:
+                raise RuntimeError("Не найден zint.exe")
+            zint_data = gs1data_to_zint_from_short(code)
+            import subprocess
+            import tempfile
+            with tempfile.TemporaryDirectory() as td:
+                png_path = Path(td) / "quick.png"
+                # --scale=10 делает DataMatrix 25 мм при 100%, без сжатия вниз
+                proc = subprocess.run(
+                    [str(zint_exe), "-b", "DATAMATRIX", "--gs1", "--gssep",
+                     "--square", "--scale=10", "-d", zint_data, "-o", str(png_path)],
+                    capture_output=True, text=True,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                if proc.returncode != 0 or not png_path.exists():
+                    raise RuntimeError("Ошибка генерации DataMatrix")
+                from PIL import Image, ImageTk
+                img = Image.open(str(png_path)).convert("RGBA")
+                self._show_quick_image(img)
+            self.quick_status_var.set(
+                "Готово: DataMatrix 25×25 мм в полном размере. Наведите камеру телефона."
+            )
+        except Exception as exc:
+            self.quick_status_var.set("Ошибка: " + str(exc))
+
+    def _show_quick_image(self, img: object) -> None:
+        """Отображает готовое изображение DataMatrix на канвасе в полном размере
+        (без уменьшения), чтобы код было легко навести камерой."""
+        from PIL import ImageTk
+        photo = ImageTk.PhotoImage(img)
+        self._quick_image_ref = photo  # держим ссылку, иначе фото исчезнет
+        self.quick_preview_canvas.delete("all")
+        self.quick_preview_canvas.create_image(0, 0, image=photo, anchor="nw")
+        self.quick_preview_canvas.configure(scrollregion=(0, 0, img.width, img.height))
+
+    def _on_quick_key(self, _event: object) -> None:
+        """Заглушка для поддержки удобства (клавиша Enter запускает проверку)."""
+        self._quick_generate()
 
     def _preview_canvas_width(self) -> int:
         """Считывает ширину канваса полного предпросмотра В ГЛАВНОМ потоке
