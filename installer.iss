@@ -2,7 +2,7 @@
 ; Компиляция: ISCC.exe installer.iss
 
 #define AppName "DMTools"
-#define AppVersion "1.8.7"
+#define AppVersion "1.8.8"
 #define AppExe "DMTools.exe"
 
 [Setup]
@@ -38,6 +38,7 @@ Name: "desktopicon"; Description: "Создать ярлык на рабочем
 
 [Files]
 Source: "dist\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\updater_helper.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "zint.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "Читать.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "centrdelfin.ico"; DestDir: "{app}"; Flags: ignoreversion

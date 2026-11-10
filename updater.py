@@ -98,11 +98,17 @@ def app_exe_path() -> Path:
 
 
 def helper_exe_path() -> Path | None:
-    """Путь к вспомогательному обновлятору (рядом с EXE или в _MEIPASS)."""
+    """Путь к вспомогательному обновлятору.
+
+    Ищем helper СНАЧАЛА рядом с главным EXE (в папке установки), а не в
+    _MEIPASS: если запустить helper из временной папки _MEI приложения,
+    он держит файл _MEI открытым и блокирует её удаление при выходе
+    (ошибка PyInstaller "Failed to remove temporary directory").
+    """
     base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
     cands = [
-        base / UPDATER_HELPER,
         Path(sys.executable).resolve().parent / UPDATER_HELPER,
+        base / UPDATER_HELPER,
     ]
     for c in cands:
         if c.is_file():
