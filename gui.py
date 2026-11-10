@@ -1605,7 +1605,7 @@ class ConverterGui:
             "show_date": bool(self.dm_show_date_var.get()),
             "show_batch": bool(self.dm_show_batch_var.get()),
             "show_code": bool(self.dm_show_code_var.get()),
-            "show_short": bool(self.dm_show_short_var.get()),
+            "use_short": bool(self.dm_show_short_var.get()),
             "bold_name": bool(self.dm_bold_name_var.get()),
             "bold_date": bool(self.dm_bold_date_var.get()),
             "bold_batch": bool(self.dm_bold_batch_var.get()),
@@ -1621,7 +1621,7 @@ class ConverterGui:
                 "show_date": bool(self.dm_show_date_var.get()),
                 "show_batch": bool(self.dm_show_batch_var.get()),
                 "show_code": bool(self.dm_show_code_var.get()),
-                "show_short": bool(self.dm_show_short_var.get()),
+                "use_short": bool(self.dm_show_short_var.get()),
                 "codes": total_codes,
             },
         }
@@ -1643,7 +1643,7 @@ class ConverterGui:
                     show_date=settings["show_date"],
                     show_batch=settings["show_batch"],
                     show_code=settings["show_code"],
-                    use_short=settings["show_short"],
+                    use_short=settings["use_short"],
                     scale=settings["scale"],
                     bold_name=settings["bold_name"],
                     bold_date=settings["bold_date"],
@@ -1992,6 +1992,7 @@ class ConverterGui:
             "show_date": bool(self.dm_show_date_var.get()),
             "show_batch": bool(self.dm_show_batch_var.get()),
             "show_code": bool(self.dm_show_code_var.get()),
+            "use_short": bool(self.dm_show_short_var.get()),
         }
 
     def _preview_dm(self) -> None:
@@ -2035,13 +2036,83 @@ class ConverterGui:
         threading.Thread(target=work, daemon=True).start()
 
     def _open_full_preview(self) -> None:
-        """Переключается на вкладку «Предпросмотр» и запускает полный
-        предпросмотр всех этикеток."""
-        self.notebook.select(self.notebook.index("end") - 1)
+        """Открывает предпросмотр в отдельном модальном окне (Toplevel).
+        Окно переиспользуется одним — если уже открыто, просто показываем его."""
+        if getattr(self, "_preview_win", None) is not None and self._preview_win.winfo_exists():
+            self._preview_win.deiconify()
+            self._preview_win.lift()
+            self._preview_win.focus_force()
+            self._render_full_preview()
+            return
+
+        win = tk.Toplevel(self.root)
+        win.title("Предпросмотр этикеток")
+        win.transient(self.root)          # модальное поверх основного окна
+        win.geometry("520x700")
+        win.minsize(360, 480)
+        win.protocol("WM_DELETE_WINDOW", lambda: self._close_preview())
+
+        win.columnconfigure(0, weight=1)
+        win.rowconfigure(1, weight=1)
+
+        ttk.Label(
+            win, text="Предпросмотр (до 30 этикеток). Нажмите «Обновить» "
+                      "или измените настройки — перестроится по текущим параметрам."
+        ).grid(row=0, column=0, sticky="w", padx=10, pady=(8, 4))
+
+        # канвас предпросмотра в модальном окне
+        self.dm_full_preview_canvas = tk.Canvas(
+            win, bg="#ffffff", highlightthickness=0, yscrollcommand=None
+        )
+        self.dm_full_preview_canvas.grid(row=1, column=0, sticky="nsew", padx=(10, 0))
+        self.dm_full_preview_scrollbar = ttk.Scrollbar(
+            win, orient="vertical", command=self.dm_full_preview_canvas.yview
+        )
+        self.dm_full_preview_scrollbar.grid(row=1, column=1, sticky="ns", pady=(0, 0))
+        self.dm_full_preview_canvas.configure(
+            yscrollcommand=self.dm_full_preview_scrollbar.set
+        )
+
+        def _on_fullwheel(event) -> None:
+            if self.dm_full_preview_canvas.winfo_exists():
+                self.dm_full_preview_canvas.yview_scroll(
+                    int(-1 * (event.delta / 120)), "units"
+                )
+
+        self.dm_full_preview_canvas.bind(
+            "<Enter>", lambda _e: self.dm_full_preview_canvas.bind_all(
+                "<MouseWheel>", _on_fullwheel)
+        )
+        self.dm_full_preview_canvas.bind(
+            "<Leave>", lambda _e: self.dm_full_preview_canvas.unbind_all("<MouseWheel>")
+        )
+
+        btn_row = ttk.Frame(win)
+        btn_row.grid(row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=8)
+        ttk.Button(
+            btn_row, text="Обновить предпросмотр",
+            command=lambda: self._render_full_preview(),
+        ).pack(side="left")
+        ttk.Button(
+            btn_row, text="Закрыть", command=lambda: self._close_preview()
+        ).pack(side="right")
+
+        self._preview_win = win
+        win.update_idletasks()
         self._render_full_preview()
 
+    def _close_preview(self) -> None:
+        """Закрывает модальное окно предпросмотра и освобождает ресурсы."""
+        win = getattr(self, "_preview_win", None)
+        if win is not None and win.winfo_exists():
+            win.destroy()
+        self._preview_win = None
+        # сбрасываем изображение, чтобы не держать память
+        self._dm_preview_images = []
+
     def _render_full_preview(self) -> None:
-        """Запускает полный предпросмотр всех этикеток (в фоновом потоке)."""
+        """Запускает полный предпросмотр всех этикеток (в фоновом потоке).
+        Результат рисуется в канвас модального окна `_preview_win`."""
         files = getattr(self, "_dm_csv_files", None) or []
         if not files:
             single = self.dm_csv_var.get().strip()
@@ -2049,6 +2120,10 @@ class ConverterGui:
                 files = [Path(single)]
         if not files:
             messagebox.showerror("Ошибка", "Сначала выберите CSV-файл(ы)")
+            return
+        # если модальное окно закрыто — ничего не рисуем
+        win = getattr(self, "_preview_win", None)
+        if win is None or not win.winfo_exists():
             return
         self.dm_status_var.set("Генерация предпросмотра...")
         if getattr(self, "_preview_busy", False):
@@ -2088,7 +2163,9 @@ class ConverterGui:
         """
         import subprocess
         import tempfile
-        from converter import parse_csv_codes, gs1data_to_zint_data, find_zint_exe
+        from converter import (parse_csv_codes, gs1data_to_zint_data,
+                               find_zint_exe, code_identification,
+                               gs1data_to_zint_from_short)
         from PIL import Image, ImageDraw, ImageFont
 
         codes = parse_csv_codes(csv_text)
@@ -2105,6 +2182,7 @@ class ConverterGui:
         show_date = params["show_date"]
         show_batch = params["show_batch"]
         show_code = params["show_code"]
+        use_short = bool(params.get("use_short", False))
 
         canvas_w = display_width
         if canvas_w < 100:
@@ -2126,7 +2204,10 @@ class ConverterGui:
         labels: list[Image.Image] = []
         for idx, code in enumerate(codes[:max_codes]):
             try:
-                zint_data = gs1data_to_zint_data(code)
+                if use_short:
+                    zint_data = gs1data_to_zint_from_short(code_identification(code))
+                else:
+                    zint_data = gs1data_to_zint_data(code)
                 with tempfile.TemporaryDirectory() as td:
                     png_path = Path(td) / f"{idx}.png"
                     proc = subprocess.run(
@@ -2193,6 +2274,14 @@ class ConverterGui:
         from PIL import ImageTk
 
         cv = self.dm_full_preview_canvas
+        try:
+            exists = cv.winfo_exists()
+        except Exception:
+            exists = False
+        if not exists:
+            # окно предпросмотра закрыли — канвас уничтожен, не рисуем
+            self._preview_busy = False
+            return
         cv.delete("all")
         cv.update_idletasks()  # убеждаемся, что канвас очищен до нового рисунка
         if combined is None:

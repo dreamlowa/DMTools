@@ -1,5 +1,5 @@
 {
-  "version": "1.8.7",
-  "url": "https://github.com/dreamlowa/delfin-etiketki/releases/download/v1.8.7/DMTools.exe",
-  "notes": "Добавлено самообновление: программа теперь проверяет наличие новой версии на GitHub и может обновляться сама."
+  "version": "1.8.8",
+  "url": "https://github.com/dreamlowa/delfin-etiketki/releases/download/v1.8.8/DMTools.exe",
+  "notes": "Предпросмотр теперь открывается в отдельном окне по кнопке. Исправлен «укороченный код»: предпросмотр, PNG, PDF и печать теперь одинаково строят укороченный DataMatrix при включённой галочке."
 }
