@@ -177,7 +177,7 @@ class ConverterGui:
 
         # видимость вкладок (галочки в меню «Вид»)
         self._tab_order = ["PDF → CSV", "CSV → DataMatrix",
-                           "Предпросмотр", "Быстрый DataMatrix"]
+                           "Предпросмотр", "Быстрый DataMatrix", "Журнал"]
         self._tab_visible = {name: tk.BooleanVar(value=True)
                              for name in self._tab_order}
 
@@ -243,6 +243,9 @@ class ConverterGui:
         view_menu.add_checkbutton(
             label="Быстрый DataMatrix", variable=self._tab_visible["Быстрый DataMatrix"],
             command=lambda: self._toggle_tab("Быстрый DataMatrix"))
+        view_menu.add_checkbutton(
+            label="Журнал", variable=self._tab_visible["Журнал"],
+            command=lambda: self._toggle_tab("Журнал"))
         menubar.add_cascade(label="Вид", menu=view_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -1093,6 +1096,32 @@ class ConverterGui:
             tab4, bg="#ffffff", highlightthickness=0
         )
         self.quick_preview_canvas.grid(row=3, column=0, sticky="nsew")
+
+        # --- Вкладка 5: Журнал (общий лог событий программы, как в 1С) ---
+        tab5 = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(tab5, text="Журнал")
+        tab5.columnconfigure(0, weight=1)
+        tab5.rowconfigure(1, weight=1)
+
+        ttk.Label(
+            tab5,
+            text="Журнал событий программы: операции, статусы и ошибки со всех вкладок.",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+        self.global_log = scrolledtext.ScrolledText(
+            tab5, state="disabled", wrap="word", width=100, height=24
+        )
+        self.global_log.grid(row=1, column=0, sticky="nsew")
+
+        log_btns = ttk.Frame(tab5)
+        log_btns.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        ttk.Button(
+            log_btns, text="Очистить журнал",
+            command=self._clear_global_log,
+        ).pack(side="left")
+        ttk.Label(
+            log_btns, text="Двойной клик по строке — подробности кода (если это код маркировки)."
+        ).pack(side="left", padx=12)
 
         # перетаскивание вкладок мышкой
         self._setup_tab_drag()
@@ -3025,6 +3054,7 @@ class ConverterGui:
                 event_type, payload = self.events.get_nowait()
                 if event_type == "log":
                     self._append_log(str(payload))
+                    self._global_log(str(payload).rstrip())
                 elif event_type == "maximum":
                     self.progress.configure(maximum=int(payload), value=0)
                 elif event_type == "progress":
@@ -3046,6 +3076,7 @@ class ConverterGui:
                 elif event_type == "preview_error":
                     # отрисовка завершилась ошибкой — снимаем блокировку и сообщаем
                     self._preview_busy = False
+                    self._global_log(f"Ошибка предпросмотра: {payload}")
                     messagebox.showerror("Ошибка", str(payload))
                     self.dm_status_var.set("Ошибка")
                 elif event_type == "dm_generated":
@@ -3208,7 +3239,8 @@ class ConverterGui:
         self.log.configure(state="disabled")
 
     def _log_op(self, message: str) -> None:
-        """Пишет строку операции с меткой времени в файл журнала."""
+        """Пишет строку операции с меткой времени в файл журнала и в
+        отдельную вкладку «Журнал» (общий лог событий программы)."""
         import datetime
         try:
             stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -3217,6 +3249,33 @@ class ConverterGui:
             with open(log_file, "a", encoding="utf-8") as fh:
                 fh.write(line)
         except OSError:
+            pass
+        self._global_log(f"[{stamp}] {message}")
+
+    def _global_log(self, message: str) -> None:
+        """Пишет строку в отдельную вкладку «Журнал» (общий лог событий).
+        Безопасен: вызывается из главного потока (Tk-виджет)."""
+        log = getattr(self, "global_log", None)
+        if log is None:
+            return
+        try:
+            log.configure(state="normal")
+            log.insert("end", message + "\n")
+            log.see("end")   # автоскролл вниз
+            log.configure(state="disabled")
+        except tk.TclError:
+            pass
+
+    def _clear_global_log(self) -> None:
+        """Очищает содержимое вкладки «Журнал»."""
+        log = getattr(self, "global_log", None)
+        if log is None:
+            return
+        try:
+            log.configure(state="normal")
+            log.delete("1.0", "end")
+            log.configure(state="disabled")
+        except tk.TclError:
             pass
 
     def _refresh_profiles_combo(self) -> None:

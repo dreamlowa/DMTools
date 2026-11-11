@@ -1,5 +1,5 @@
 {
-  "version": "1.8.8",
-  "url": "https://github.com/dreamlowa/delfin-etiketki/releases/download/v1.8.8/DMTools.exe",
-  "notes": "Предпросмотр теперь открывается в отдельном окне по кнопке. Исправлен «укороченный код»: предпросмотр, PNG, PDF и печать теперь одинаково строят укороченный DataMatrix при включённой галочке."
+  "version": "1.8.9",
+  "url": "https://github.com/dreamlowa/delfin-etiketki/releases/download/v1.8.9/DMTools.exe",
+  "notes": "Добавлена отдельная вкладка «Журнал» (как в 1С) — общий журнал событий программы: операции, статусы и ошибки со всех вкладок."
 }
