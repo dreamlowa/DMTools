@@ -667,18 +667,22 @@ def build_label_page(
     label_h_mm: float,
     heading: str = "",
     production_date: str = "",
+    expiry: str = "",
     batch: str = "",
     show_date: bool = True,
+    show_expiry: bool = True,
     show_batch: bool = True,
     show_code: bool = True,
     use_short: bool = False,
     scale: int = 4,
     bold_name: bool = False,
     bold_date: bool = False,
+    bold_expiry: bool = False,
     bold_batch: bool = False,
     bold_code: bool = False,
     size_name: float | None = None,
     size_date: float | None = None,
+    size_expiry: float | None = None,
     size_batch: float | None = None,
     size_code: float | None = None,
 ) -> None:
@@ -686,8 +690,9 @@ def build_label_page(
 
     use_short=True — DataMatrix строится из укороченного кода идентификации
     (01+GTIN+21+серия, без криптохвоста 91/92), а не из полного.
-    Под штрихкодом печатается текст кода, дата производства и номер партии —
-    каждое поле независимо включается/выключается флагами show_date/show_batch/show_code.
+    Под штрихкодом печатается текст кода, дата производства, срок годности
+    и номер партии — каждое поле независимо включается/выключается флагами
+    show_date/show_expiry/show_batch/show_code.
     """
     import subprocess
     import tempfile
@@ -771,6 +776,8 @@ def build_label_page(
             )
         if show_date and production_date:
             bottom_lines.append(f"Дата производства: {production_date}")
+        if show_expiry and expiry:
+            bottom_lines.append(f"Срок годности: {expiry}")
         if show_batch and batch:
             bottom_lines.append(f"Партия: {batch}")
         if show_code:
@@ -807,10 +814,13 @@ def build_label_page(
         # группа строк по типу (для порядка снизу вверх и приоритета отбрасывания)
         name_lines: list[str] = []
         date_lines: list[str] = []
+        expiry_lines: list[str] = []
         batch_lines: list[str] = []
         for ln in other_lines:
             if ln.startswith("Дата производства:"):
                 date_lines.append(ln)
+            elif ln.startswith("Срок годности:"):
+                expiry_lines.append(ln)
             elif ln.startswith("Партия:"):
                 batch_lines.append(ln)
             elif ln.strip():
@@ -833,12 +843,13 @@ def build_label_page(
             return fs
 
         info_fs_date = _pick(size_date, date_lines)
+        info_fs_expiry = _pick(size_expiry, expiry_lines)
         info_fs_batch = _pick(size_batch, batch_lines)
         # если размеры заданы порознь и они различаются — это ок;
-        # если нет — стараемся сделать общий размер для даты и партии
-        if size_date is None and size_batch is None:
-            info_fs = min(info_fs_date, info_fs_batch)
-            info_fs_date = info_fs_batch = info_fs
+        # если нет — стараемся сделать общий размер для даты, срока и партии
+        if size_date is None and size_expiry is None and size_batch is None:
+            info_fs = min(info_fs_date, info_fs_expiry, info_fs_batch)
+            info_fs_date = info_fs_expiry = info_fs_batch = info_fs
         name_fs = _pick(size_name, name_lines)
         code_fs = _pick(size_code, code_with_sub)
 
@@ -858,8 +869,9 @@ def build_label_page(
                 return [(c, ffs) for c in chunks]
             return [(text, ffs)]
 
-        # дата и партия — одна строка (без переноса) с общим шрифтом
+        # дата, срок и партия — одна строка (без переноса) с общим шрифтом
         date_rows: list[tuple[str, float, str]] = [(t, info_fs_date, bold_font if bold_date else use_font) for t in date_lines]
+        expiry_rows: list[tuple[str, float, str]] = [(t, info_fs_expiry, bold_font if bold_expiry else use_font) for t in expiry_lines]
         batch_rows: list[tuple[str, float, str]] = [(t, info_fs_batch, bold_font if bold_batch else use_font) for t in batch_lines]
         # наименование — тот же шрифт, но может переноситься на несколько строк
         name_rows: list[tuple[str, float, str]] = [(c, fs, bold_font if bold_name else use_font) for c, fs in [r for t in name_lines for r in _wrap(t, name_fs)]]
@@ -878,17 +890,18 @@ def build_label_page(
         code_top = margin
 
         mandatory_date = date_rows  # всегда
+        mandatory_expiry = expiry_rows  # всегда
         mandatory_batch = batch_rows  # всегда
         optional_name = name_rows
         optional_code = code_rows
 
-        # сколько ещё строк поместится поверх даты и партии
-        block_mand = len(mandatory_date) + len(mandatory_batch)
+        # сколько ещё строк поместится поверх даты, срока и партии
+        block_mand = len(mandatory_date) + len(mandatory_expiry) + len(mandatory_batch)
         min_code_est = 18
         max_est_lines = max(int((bottom_limit - margin - min_code_est - gap_code_text) // line_h), 1)
         extra_slots = max_est_lines - block_mand
 
-        # строим итоговый список сверху вниз: наименование, дата, партия, подпись кода
+        # строим итоговый список сверху вниз: наименование, дата, срок, партия, подпись кода
         top_extra: list[tuple[str, float, str]] = []
         bottom_extra: list[tuple[str, float, str]] = []
         for item in optional_name:
@@ -898,8 +911,8 @@ def build_label_page(
             if len(top_extra) + len(bottom_extra) < extra_slots:
                 bottom_extra.append(item)
 
-        # итоговый порядок сверху вниз: наименование, дата, партия, подпись кода
-        selected: list[tuple[str, float, str]] = top_extra + mandatory_date + mandatory_batch + bottom_extra
+        # итоговый порядок сверху вниз: наименование, дата, срок, партия, подпись кода
+        selected: list[tuple[str, float, str]] = top_extra + mandatory_date + mandatory_expiry + mandatory_batch + bottom_extra
 
         # позиции базовых линий снизу вверх
         baseline_list: list[float] = []
@@ -946,18 +959,22 @@ def generate_label_pdf(
     label_h_mm: float = 40.0,
     heading: str = "",
     production_date: str = "",
+    expiry: str = "",
     batch: str = "",
     show_date: bool = True,
+    show_expiry: bool = True,
     show_batch: bool = True,
     show_code: bool = True,
     use_short: bool = False,
     scale: int = 4,
     bold_name: bool = False,
     bold_date: bool = False,
+    bold_expiry: bool = False,
     bold_batch: bool = False,
     bold_code: bool = False,
     size_name: float | None = None,
     size_date: float | None = None,
+    size_expiry: float | None = None,
     size_batch: float | None = None,
     size_code: float | None = None,
     progress_cb=None,
@@ -998,18 +1015,22 @@ def generate_label_pdf(
                     label_h_mm=label_h_mm,
                     heading=heading,
                     production_date=production_date,
+                    expiry=expiry,
                     batch=batch,
                     show_date=show_date,
+                    show_expiry=show_expiry,
                     show_batch=show_batch,
                     show_code=show_code,
                     use_short=use_short,
                     scale=scale,
                     bold_name=bold_name,
                     bold_date=bold_date,
+                    bold_expiry=bold_expiry,
                     bold_batch=bold_batch,
                     bold_code=bold_code,
                     size_name=size_name,
                     size_date=size_date,
+                    size_expiry=size_expiry,
                     size_batch=size_batch,
                     size_code=size_code,
                 )
@@ -1128,18 +1149,22 @@ def export_labels_png(
     label_h_mm: float = 40.0,
     heading: str = "",
     production_date: str = "",
+    expiry: str = "",
     batch: str = "",
     show_date: bool = True,
+    show_expiry: bool = True,
     show_batch: bool = True,
     show_code: bool = True,
     use_short: bool = False,
     dpi: int = 300,
     bold_name: bool = False,
     bold_date: bool = False,
+    bold_expiry: bool = False,
     bold_batch: bool = False,
     bold_code: bool = False,
     size_name: float | None = None,
     size_date: float | None = None,
+    size_expiry: float | None = None,
     size_batch: float | None = None,
     size_code: float | None = None,
 ) -> tuple[int, str]:
@@ -1165,18 +1190,22 @@ def export_labels_png(
         label_h_mm=label_h_mm,
         heading=heading,
         production_date=production_date,
+        expiry=expiry,
         batch=batch,
         show_date=show_date,
+        show_expiry=show_expiry,
         show_batch=show_batch,
         show_code=show_code,
         use_short=use_short,
         scale=6,
         bold_name=bold_name,
         bold_date=bold_date,
+        bold_expiry=bold_expiry,
         bold_batch=bold_batch,
         bold_code=bold_code,
         size_name=size_name,
         size_date=size_date,
+        size_expiry=size_expiry,
         size_batch=size_batch,
         size_code=size_code,
     )

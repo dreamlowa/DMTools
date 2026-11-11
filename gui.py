@@ -160,10 +160,14 @@ class ConverterGui:
         self.dm_batch_var = tk.StringVar()
         self.dm_name_var = tk.StringVar()
         self.dm_bold_name_var = tk.BooleanVar(value=False)
+        self.dm_show_expiry_var = tk.BooleanVar(value=True)
         self.dm_bold_date_var = tk.BooleanVar(value=False)
         self.dm_bold_batch_var = tk.BooleanVar(value=False)
         self.dm_bold_code_var = tk.BooleanVar(value=False)
         self.dm_size_name_var = tk.StringVar(value="")
+        self.dm_expiry_var = tk.StringVar()
+        self.dm_bold_expiry_var = tk.BooleanVar(value=False)
+        self.dm_size_expiry_var = tk.StringVar(value="")
         self.dm_size_date_var = tk.StringVar(value="")
         self.dm_size_batch_var = tk.StringVar(value="")
         self.dm_size_code_var = tk.StringVar(value="")
@@ -843,57 +847,78 @@ class ConverterGui:
         )
         self.dm_size_date_spin.grid(row=3, column=3, sticky="w", padx=(4, 0), pady=(0, 8))
 
-        ttk.Label(left, text="Партия:").grid(
+        # Срок годности (сразу после даты производства)
+        ttk.Label(left, text="Срок годности:").grid(
             row=4, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
         )
+        self.dm_expiry_entry = ttk.Entry(left, textvariable=self.dm_expiry_var)
+        self.dm_expiry_entry.grid(row=4, column=1, sticky="ew", pady=(0, 8))
+        self.dm_expiry_entry.bind("<KeyRelease>", self._on_preview_input_change)
+        self.dm_bold_expiry_check = ttk.Checkbutton(
+            left, text="Жирн.", variable=self.dm_bold_expiry_var, command=self._on_show_change
+        )
+        self.dm_bold_expiry_check.grid(row=4, column=2, sticky="w", padx=(8, 0), pady=(0, 8))
+        self.dm_size_expiry_spin = ttk.Spinbox(
+            left, from_=2, to=20, increment=0.5, width=4,
+            textvariable=self.dm_size_expiry_var, command=self._on_show_change,
+        )
+        self.dm_size_expiry_spin.grid(row=4, column=3, sticky="w", padx=(4, 0), pady=(0, 8))
+
+        ttk.Label(left, text="Партия:").grid(
+            row=5, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+        )
         self.dm_batch_entry = ttk.Entry(left, textvariable=self.dm_batch_var)
-        self.dm_batch_entry.grid(row=4, column=1, sticky="ew", pady=(0, 8))
+        self.dm_batch_entry.grid(row=5, column=1, sticky="ew", pady=(0, 8))
         self.dm_batch_entry.bind("<KeyRelease>", self._on_preview_input_change)
         self.dm_bold_batch_check = ttk.Checkbutton(
             left, text="Жирн.", variable=self.dm_bold_batch_var, command=self._on_show_change
         )
-        self.dm_bold_batch_check.grid(row=4, column=2, sticky="w", padx=(8, 0), pady=(0, 8))
+        self.dm_bold_batch_check.grid(row=5, column=2, sticky="w", padx=(8, 0), pady=(0, 8))
         self.dm_size_batch_spin = ttk.Spinbox(
             left, from_=2, to=20, increment=0.5, width=4,
             textvariable=self.dm_size_batch_var, command=self._on_show_change,
         )
-        self.dm_size_batch_spin.grid(row=4, column=3, sticky="w", padx=(4, 0), pady=(0, 8))
+        self.dm_size_batch_spin.grid(row=5, column=3, sticky="w", padx=(4, 0), pady=(0, 8))
 
         ttk.Label(left, text="Наименование:").grid(
-            row=5, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+            row=6, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
         )
         self.dm_name_entry = ttk.Entry(left, textvariable=self.dm_name_var)
-        self.dm_name_entry.grid(row=5, column=1, sticky="ew", pady=(0, 8))
+        self.dm_name_entry.grid(row=6, column=1, sticky="ew", pady=(0, 8))
         self.dm_name_entry.bind("<KeyRelease>", self._on_preview_input_change)
         self.dm_bold_name_check = ttk.Checkbutton(
             left, text="Жирн.", variable=self.dm_bold_name_var, command=self._on_show_change
         )
-        self.dm_bold_name_check.grid(row=5, column=2, sticky="w", padx=(8, 0), pady=(0, 8))
+        self.dm_bold_name_check.grid(row=6, column=2, sticky="w", padx=(8, 0), pady=(0, 8))
         self.dm_size_name_spin = ttk.Spinbox(
             left, from_=2, to=20, increment=0.5, width=4,
             textvariable=self.dm_size_name_var, command=self._on_show_change,
         )
-        self.dm_size_name_spin.grid(row=5, column=3, sticky="w", padx=(4, 0), pady=(0, 8))
+        self.dm_size_name_spin.grid(row=6, column=3, sticky="w", padx=(4, 0), pady=(0, 8))
 
         ttk.Label(left, text="Сохранить PDF:").grid(
-            row=6, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+            row=7, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
         )
         self.dm_pdf_entry = ttk.Entry(left, textvariable=self.dm_pdf_var)
-        self.dm_pdf_entry.grid(row=6, column=1, sticky="ew", pady=(0, 8))
+        self.dm_pdf_entry.grid(row=7, column=1, sticky="ew", pady=(0, 8))
         ttk.Button(left, text="Выбрать PDF", command=self._select_dm_pdf).grid(
-            row=6, column=2, padx=(8, 0), pady=(0, 8)
+            row=7, column=2, padx=(8, 0), pady=(0, 8)
         )
 
         ttk.Label(left, text="Показывать на этикетке:").grid(
-            row=7, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+            row=8, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
         )
 
         show_opts = ttk.Frame(left)
-        show_opts.grid(row=7, column=1, columnspan=2, sticky="w", pady=(0, 8))
+        show_opts.grid(row=8, column=1, columnspan=2, sticky="w", pady=(0, 8))
         self.dm_show_date_check = ttk.Checkbutton(
             show_opts, text="Дата произв.", variable=self.dm_show_date_var, command=self._on_show_change
         )
         self.dm_show_date_check.grid(row=0, column=0, sticky="w", padx=(0, 12))
+        self.dm_show_expiry_check = ttk.Checkbutton(
+            show_opts, text="Срок годн.", variable=self.dm_show_expiry_var, command=self._on_show_change
+        )
+        self.dm_show_expiry_check.grid(row=1, column=0, sticky="w", padx=(0, 12))
         self.dm_show_batch_check = ttk.Checkbutton(
             show_opts, text="Партия", variable=self.dm_show_batch_var, command=self._on_show_change
         )
@@ -915,10 +940,10 @@ class ConverterGui:
             show_opts, text="Укороченный код", variable=self.dm_show_short_var,
             command=self._on_show_change,
         )
-        self.dm_show_short_check.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        self.dm_show_short_check.grid(row=1, column=1, columnspan=3, sticky="w", pady=(4, 0))
 
         dm_actions = ttk.Frame(left)
-        dm_actions.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        dm_actions.grid(row=9, column=0, columnspan=3, sticky="ew", pady=(0, 8))
         self.dm_generate_button = ttk.Button(
             dm_actions, text="Сгенерировать PDF", command=self._generate_dm_pdf
         )
@@ -952,7 +977,7 @@ class ConverterGui:
 
         # Шаблоны этикеток (профили настроек)
         profile_row = ttk.Frame(left)
-        profile_row.grid(row=9, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        profile_row.grid(row=10, column=0, columnspan=3, sticky="ew", pady=(0, 8))
         profile_row.columnconfigure(1, weight=1)
         ttk.Label(profile_row, text="Шаблон:").grid(
             row=0, column=0, sticky="w", padx=(0, 8)
@@ -974,15 +999,15 @@ class ConverterGui:
         self._refresh_profiles_combo()
 
         # внутренний журнал вкладки убран — всё идёт в общий «Журнал»
-        left.rowconfigure(10, weight=1)
+        left.rowconfigure(11, weight=1)
 
         ttk.Label(left, textvariable=self.dm_status_var, anchor="w").grid(
-            row=11, column=0, columnspan=3, sticky="ew"
+            row=12, column=0, columnspan=3, sticky="ew"
         )
         self.dm_progress = ttk.Progressbar(left, mode="determinate", maximum=100)
-        self.dm_progress.grid(row=12, column=0, columnspan=3, sticky="ew", pady=(4, 0))
+        self.dm_progress.grid(row=13, column=0, columnspan=3, sticky="ew", pady=(4, 0))
         self.dm_progress_label = ttk.Label(left, text="", anchor="w")
-        self.dm_progress_label.grid(row=13, column=0, columnspan=3, sticky="ew")
+        self.dm_progress_label.grid(row=14, column=0, columnspan=3, sticky="ew")
 
         # ===== Правая часть: живой макет одной этикетки =====
         live_frame = ttk.LabelFrame(tab2_body, text="Макет этикетки (пример)")
@@ -1270,17 +1295,21 @@ class ConverterGui:
             "size_h": size_h,
             "heading": self.dm_name_var.get().strip(),
             "production_date": self.dm_date_var.get().strip(),
+            "expiry": self.dm_expiry_var.get().strip(),
             "batch": self.dm_batch_var.get().strip(),
             "show_date": bool(self.dm_show_date_var.get()),
+            "show_expiry": bool(self.dm_show_expiry_var.get()),
             "show_batch": bool(self.dm_show_batch_var.get()),
             "show_code": bool(self.dm_show_code_var.get()),
             "use_short": bool(self.dm_show_short_var.get()),
             "bold_name": bool(self.dm_bold_name_var.get()),
             "bold_date": bool(self.dm_bold_date_var.get()),
+            "bold_expiry": bool(self.dm_bold_expiry_var.get()),
             "bold_batch": bool(self.dm_bold_batch_var.get()),
             "bold_code": bool(self.dm_bold_code_var.get()),
             "size_name": _float_or_none(self.dm_size_name_var.get()),
             "size_date": _float_or_none(self.dm_size_date_var.get()),
+            "size_expiry": _float_or_none(self.dm_size_expiry_var.get()),
             "size_batch": _float_or_none(self.dm_size_batch_var.get()),
             "size_code": _float_or_none(self.dm_size_code_var.get()),
         }
@@ -1294,18 +1323,22 @@ class ConverterGui:
                     label_h_mm=size_h,
                     heading=settings["heading"],
                     production_date=settings["production_date"],
+                    expiry=settings["expiry"],
                     batch=settings["batch"],
                     show_date=settings["show_date"],
+                    show_expiry=settings["show_expiry"],
                     show_batch=settings["show_batch"],
                     show_code=settings["show_code"],
                     use_short=settings["use_short"],
                     dpi=300,
                     bold_name=settings["bold_name"],
                     bold_date=settings["bold_date"],
+                    bold_expiry=settings["bold_expiry"],
                     bold_batch=settings["bold_batch"],
                     bold_code=settings["bold_code"],
                     size_name=settings["size_name"],
                     size_date=settings["size_date"],
+                    size_expiry=settings["size_expiry"],
                     size_batch=settings["size_batch"],
                     size_code=settings["size_code"],
                 )
@@ -1568,24 +1601,30 @@ class ConverterGui:
             "scale": self._dm_scale_for(size_w),
             "heading": self.dm_name_var.get().strip(),
             "production_date": self.dm_date_var.get().strip(),
+            "expiry": self.dm_expiry_var.get().strip(),
             "batch": self.dm_batch_var.get().strip(),
             "show_date": bool(self.dm_show_date_var.get()),
+            "show_expiry": bool(self.dm_show_expiry_var.get()),
             "show_batch": bool(self.dm_show_batch_var.get()),
             "show_code": bool(self.dm_show_code_var.get()),
             "use_short": bool(self.dm_show_short_var.get()),
             "bold_name": bool(self.dm_bold_name_var.get()),
             "bold_date": bool(self.dm_bold_date_var.get()),
+            "bold_expiry": bool(self.dm_bold_expiry_var.get()),
             "bold_batch": bool(self.dm_bold_batch_var.get()),
             "bold_code": bool(self.dm_bold_code_var.get()),
             "size_name": _float_or_none(self.dm_size_name_var.get()),
             "size_date": _float_or_none(self.dm_size_date_var.get()),
+            "size_expiry": _float_or_none(self.dm_size_expiry_var.get()),
             "size_batch": _float_or_none(self.dm_size_batch_var.get()),
             "size_code": _float_or_none(self.dm_size_code_var.get()),
             "diag": {
                 "size_mm": [size_w, size_h],
                 "production_date": self.dm_date_var.get().strip(),
+                "expiry": self.dm_expiry_var.get().strip(),
                 "batch": self.dm_batch_var.get().strip(),
                 "show_date": bool(self.dm_show_date_var.get()),
+                "show_expiry": bool(self.dm_show_expiry_var.get()),
                 "show_batch": bool(self.dm_show_batch_var.get()),
                 "show_code": bool(self.dm_show_code_var.get()),
                 "use_short": bool(self.dm_show_short_var.get()),
@@ -1606,18 +1645,22 @@ class ConverterGui:
                     label_h_mm=size_h,
                     heading=settings["heading"],
                     production_date=settings["production_date"],
+                    expiry=settings["expiry"],
                     batch=settings["batch"],
                     show_date=settings["show_date"],
+                    show_expiry=settings["show_expiry"],
                     show_batch=settings["show_batch"],
                     show_code=settings["show_code"],
                     use_short=settings["use_short"],
                     scale=settings["scale"],
                     bold_name=settings["bold_name"],
                     bold_date=settings["bold_date"],
+                    bold_expiry=settings["bold_expiry"],
                     bold_batch=settings["bold_batch"],
                     bold_code=settings["bold_code"],
                     size_name=settings["size_name"],
                     size_date=settings["size_date"],
+                    size_expiry=settings["size_expiry"],
                     size_batch=settings["size_batch"],
                     size_code=settings["size_code"],
                     progress_cb=_on_progress,
@@ -1730,8 +1773,10 @@ class ConverterGui:
             "scale": self._dm_scale_for(size_w),
             "heading": self.dm_name_var.get().strip(),
             "production_date": self.dm_date_var.get().strip(),
+            "expiry": self.dm_expiry_var.get().strip(),
             "batch": self.dm_batch_var.get().strip(),
             "show_date": bool(self.dm_show_date_var.get()),
+            "show_expiry": bool(self.dm_show_expiry_var.get()),
             "show_batch": bool(self.dm_show_batch_var.get()),
             "show_code": bool(self.dm_show_code_var.get()),
             "use_short": bool(self.dm_show_short_var.get()),
@@ -1754,8 +1799,10 @@ class ConverterGui:
                     label_h_mm=size_h,
                     heading=settings["heading"],
                     production_date=settings["production_date"],
+                    expiry=settings["expiry"],
                     batch=settings["batch"],
                     show_date=settings["show_date"],
+                    show_expiry=settings["show_expiry"],
                     show_batch=settings["show_batch"],
                     show_code=settings["show_code"],
                     use_short=settings["use_short"],
@@ -1954,9 +2001,11 @@ class ConverterGui:
             "size_w": size_w,
             "size_h": size_h,
             "production_date": self.dm_date_var.get().strip(),
+            "expiry": self.dm_expiry_var.get().strip(),
             "batch": self.dm_batch_var.get().strip(),
             "name": self.dm_name_var.get().strip(),
             "show_date": bool(self.dm_show_date_var.get()),
+            "show_expiry": bool(self.dm_show_expiry_var.get()),
             "show_batch": bool(self.dm_show_batch_var.get()),
             "show_code": bool(self.dm_show_code_var.get()),
             "use_short": bool(self.dm_show_short_var.get()),
@@ -2144,9 +2193,11 @@ class ConverterGui:
         size_w = params["size_w"]
         size_h = params["size_h"]
         production_date = params["production_date"]
+        expiry = params["expiry"]
         batch = params["batch"]
         name = params["name"]
         show_date = params["show_date"]
+        show_expiry = params["show_expiry"]
         show_batch = params["show_batch"]
         show_code = params["show_code"]
         use_short = bool(params.get("use_short", False))
@@ -2208,6 +2259,8 @@ class ConverterGui:
                     lines = []
                     if show_date and production_date:
                         lines.append(f"Дата производства: {production_date}")
+                    if show_expiry and expiry:
+                        lines.append(f"Срок годности: {expiry}")
                     if show_batch and batch:
                         lines.append(f"Партия: {batch}")
                     if name:
@@ -2367,6 +2420,9 @@ class ConverterGui:
             )
         if self.dm_show_date_var.get() and self.dm_date_var.get().strip():
             line(f"Дата производства: {self.dm_date_var.get().strip()}", bold=self.dm_bold_date_var.get())
+            ty += mini + 2
+        if self.dm_show_expiry_var.get() and self.dm_expiry_var.get().strip():
+            line(f"Срок годности: {self.dm_expiry_var.get().strip()}", bold=self.dm_bold_expiry_var.get())
             ty += mini + 2
         if self.dm_show_batch_var.get() and self.dm_batch_var.get().strip():
             line(f"Партия: {self.dm_batch_var.get().strip()}", bold=self.dm_bold_batch_var.get())
@@ -3228,18 +3284,22 @@ class ConverterGui:
             "label_size": self.dm_label_size_var.get(),
             "group": self.dm_group_var.get(),
             "show_date": bool(self.dm_show_date_var.get()),
+            "show_expiry": bool(self.dm_show_expiry_var.get()),
             "show_batch": bool(self.dm_show_batch_var.get()),
             "show_code": bool(self.dm_show_code_var.get()),
             "show_short": bool(self.dm_show_short_var.get()),
             "name": self.dm_name_var.get(),
             "date": self.dm_date_var.get(),
+            "expiry": self.dm_expiry_var.get(),
             "batch": self.dm_batch_var.get(),
             "bold_name": bool(self.dm_bold_name_var.get()),
             "bold_date": bool(self.dm_bold_date_var.get()),
+            "bold_expiry": bool(self.dm_bold_expiry_var.get()),
             "bold_batch": bool(self.dm_bold_batch_var.get()),
             "bold_code": bool(self.dm_bold_code_var.get()),
             "size_name": self.dm_size_name_var.get(),
             "size_date": self.dm_size_date_var.get(),
+            "size_expiry": self.dm_size_expiry_var.get(),
             "size_batch": self.dm_size_batch_var.get(),
             "size_code": self.dm_size_code_var.get(),
         }
@@ -3253,9 +3313,11 @@ class ConverterGui:
             "group": (self.dm_group_var, str),
             "name": (self.dm_name_var, str),
             "date": (self.dm_date_var, str),
+            "expiry": (self.dm_expiry_var, str),
             "batch": (self.dm_batch_var, str),
             "size_name": (self.dm_size_name_var, str),
             "size_date": (self.dm_size_date_var, str),
+            "size_expiry": (self.dm_size_expiry_var, str),
             "size_batch": (self.dm_size_batch_var, str),
             "size_code": (self.dm_size_code_var, str),
         }
@@ -3267,11 +3329,13 @@ class ConverterGui:
                     pass
         bool_map = {
             "show_date": self.dm_show_date_var,
+            "show_expiry": self.dm_show_expiry_var,
             "show_batch": self.dm_show_batch_var,
             "show_code": self.dm_show_code_var,
             "show_short": self.dm_show_short_var,
             "bold_name": self.dm_bold_name_var,
             "bold_date": self.dm_bold_date_var,
+            "bold_expiry": self.dm_bold_expiry_var,
             "bold_batch": self.dm_bold_batch_var,
             "bold_code": self.dm_bold_code_var,
         }
@@ -3399,6 +3463,7 @@ class ConverterGui:
             pass
         for key, attr in (
             ("dm_show_date", "dm_show_date_var"),
+            ("dm_show_expiry", "dm_show_expiry_var"),
             ("dm_show_batch", "dm_show_batch_var"),
             ("dm_show_code", "dm_show_code_var"),
             ("dm_show_short", "dm_show_short_var"),
@@ -3413,6 +3478,7 @@ class ConverterGui:
         for plain_key, var_name in (
             ("dm_bold_name", "dm_bold_name_var"),
             ("dm_bold_date", "dm_bold_date_var"),
+            ("dm_bold_expiry", "dm_bold_expiry_var"),
             ("dm_bold_batch", "dm_bold_batch_var"),
             ("dm_bold_code", "dm_bold_code_var"),
         ):
@@ -3424,6 +3490,7 @@ class ConverterGui:
         for plain_key, var_name in (
             ("dm_size_name", "dm_size_name_var"),
             ("dm_size_date", "dm_size_date_var"),
+            ("dm_size_expiry", "dm_size_expiry_var"),
             ("dm_size_batch", "dm_size_batch_var"),
             ("dm_size_code", "dm_size_code_var"),
         ):
@@ -3452,15 +3519,18 @@ class ConverterGui:
             "dm_label_size": self.dm_label_size_var.get(),
             "dm_group": self.dm_group_var.get(),
             "dm_show_date": bool(self.dm_show_date_var.get()),
+            "dm_show_expiry": bool(self.dm_show_expiry_var.get()),
             "dm_show_batch": bool(self.dm_show_batch_var.get()),
             "dm_show_code": bool(self.dm_show_code_var.get()),
             "dm_show_short": bool(self.dm_show_short_var.get()),
             "dm_bold_name": bool(self.dm_bold_name_var.get()),
             "dm_bold_date": bool(self.dm_bold_date_var.get()),
+            "dm_bold_expiry": bool(self.dm_bold_expiry_var.get()),
             "dm_bold_batch": bool(self.dm_bold_batch_var.get()),
             "dm_bold_code": bool(self.dm_bold_code_var.get()),
             "dm_size_name": self.dm_size_name_var.get(),
             "dm_size_date": self.dm_size_date_var.get(),
+            "dm_size_expiry": self.dm_size_expiry_var.get(),
             "dm_size_batch": self.dm_size_batch_var.get(),
             "dm_size_code": self.dm_size_code_var.get(),
             "profiles": self._profiles,
