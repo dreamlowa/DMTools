@@ -123,6 +123,8 @@ def _split_drop_paths(data: str) -> list[str]:
 
 
 class ConverterGui:
+    DATE_FORMATS = ("ММ.ГГГГ", "ММ.ГГ", "ДД.ММ.ГГГГ", "ДД.ММ.ГГ")
+
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title(f"DMTools v{APP_VERSION}")
@@ -171,6 +173,8 @@ class ConverterGui:
         self.dm_size_date_var = tk.StringVar(value="")
         self.dm_size_batch_var = tk.StringVar(value="")
         self.dm_size_code_var = tk.StringVar(value="")
+        self.dm_date_format_var = tk.StringVar(value="ММ.ГГГГ")
+        self.dm_expiry_format_var = tk.StringVar(value="ММ.ГГГГ")
         self.dm_profile_name_var = tk.StringVar(value="")
         self.quick_code_var = tk.StringVar()
         self.quick_status_var = tk.StringVar(value="Вставьте код маркировки и нажмите «Проверить»")
@@ -830,13 +834,19 @@ class ConverterGui:
         self.dm_size_combo.grid(row=2, column=1, sticky="w", pady=(0, 8))
         self.dm_size_combo.bind("<<ComboboxSelected>>", self._on_preview_input_change)
 
-        # Дата производства и партия
-        ttk.Label(left, text="Дата произв. (ДД.ММ.ГГГГ / ММ.ГГГГ):").grid(
+        # Дата производства
+        ttk.Label(left, text="Дата произв.:").grid(
             row=3, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
         )
         self.dm_date_entry = ttk.Entry(left, textvariable=self.dm_date_var)
         self.dm_date_entry.grid(row=3, column=1, sticky="ew", pady=(0, 8))
         self.dm_date_entry.bind("<KeyRelease>", self._on_date_format)
+        self.dm_date_fmt_combo = ttk.Combobox(
+            left, textvariable=self.dm_date_format_var,
+            values=self.DATE_FORMATS, state="readonly", width=9,
+        )
+        self.dm_date_fmt_combo.grid(row=3, column=4, sticky="w", padx=(8, 0), pady=(0, 8))
+        self.dm_date_fmt_combo.bind("<<ComboboxSelected>>", self._on_date_format)
         self.dm_bold_date_check = ttk.Checkbutton(
             left, text="Жирн.", variable=self.dm_bold_date_var, command=self._on_show_change
         )
@@ -853,7 +863,13 @@ class ConverterGui:
         )
         self.dm_expiry_entry = ttk.Entry(left, textvariable=self.dm_expiry_var)
         self.dm_expiry_entry.grid(row=4, column=1, sticky="ew", pady=(0, 8))
-        self.dm_expiry_entry.bind("<KeyRelease>", self._on_preview_input_change)
+        self.dm_expiry_entry.bind("<KeyRelease>", self._on_date_format)
+        self.dm_expiry_fmt_combo = ttk.Combobox(
+            left, textvariable=self.dm_expiry_format_var,
+            values=self.DATE_FORMATS, state="readonly", width=9,
+        )
+        self.dm_expiry_fmt_combo.grid(row=4, column=4, sticky="w", padx=(8, 0), pady=(0, 8))
+        self.dm_expiry_fmt_combo.bind("<<ComboboxSelected>>", self._on_date_format)
         self.dm_bold_expiry_check = ttk.Checkbutton(
             left, text="Жирн.", variable=self.dm_bold_expiry_var, command=self._on_show_change
         )
@@ -1525,10 +1541,12 @@ class ConverterGui:
         return "\n".join(parts)
 
     def _check_bad_date(self) -> str:
-        """Возвращает текст ошибки, если поле даты заполнено и невалидно;
-        подсвечивает поле красным. Иначе возвращает пустую строку."""
+        """Возвращает текст ошибки, если поле даты производства или срока
+        годности заполнено и невалидно; подсвечивает поля красным.
+        Иначе возвращает пустую строку."""
         self._mark_date_status()
-        reason = self._invalid_date_reason()
+        self._mark_expiry_status()
+        reason = self._invalid_date_reason() or self._invalid_expiry_reason()
         return reason or ""
 
     def _generate_dm_pdf(self) -> None:
@@ -2529,37 +2547,69 @@ class ConverterGui:
         макет этикетки (мгновенно, без тяжёлой генерации zint)."""
         self._update_live_mock()
 
-    def _on_date_format(self, event=None) -> None:
-        """Автоматически вставляет точки в поле даты в формате ДД.ММ.ГГГГ."""
-        widget = self.dm_date_entry
-        if widget is None:
-            return
-        text = widget.get()
-        # убираем всё, кроме цифр (макс. 8: ДДММГГГГ или 4: ММГГ)
-        digits = "".join(ch for ch in text if ch.isdigit())[:8]
-        # прогрессивно ставим точки по мере ввода:
-        # после 2-й цифры — точка, после 4-й — ещё точка, далее год без точек
+    def _format_date_input(self, text: str, date_format: str) -> str:
+        """Приводит введённый текст к маске выбранного формата:
+        расставляет точки по позициям. Допускает неполный ввод
+        (точки ставятся только на заполненные позиции)."""
+        digits = "".join(ch for ch in text if ch.isdigit())
+        if date_format in ("ММ.ГГГГ", "ММ.ГГ"):
+            digits = digits[:6] if date_format == "ММ.ГГГГ" else digits[:4]
+            dots = (1,)
+        elif date_format == "ДД.ММ.ГГ":
+            digits = digits[:6]
+            dots = (1, 3)
+        else:  # ДД.ММ.ГГГГ
+            digits = digits[:8]
+            dots = (1, 3)
         formatted = ""
         for i, ch in enumerate(digits):
             formatted += ch
-            if i in (1, 3) and i + 1 < len(digits):
+            if i in dots and i + 1 < len(digits):
                 formatted += "."
-        # обновляем поле, курсор в конец
+        return formatted
+
+    def _on_date_format(self, event=None) -> None:
+        """Обрабатывает ввод в полях даты производства и срока годности:
+        расставляет точки по маске выбранного формата, подсвечивает поле
+        по валидности и обновляет живой макет этикетки."""
+        if event is not None:
+            widget = getattr(event, "widget", None)
+            if widget == self.dm_expiry_entry:
+                fmt = self.dm_expiry_format_var.get()
+            elif widget == self.dm_expiry_fmt_combo:
+                fmt = self.dm_expiry_format_var.get()
+                widget = self.dm_expiry_entry
+            elif widget == self.dm_date_fmt_combo:
+                fmt = self.dm_date_format_var.get()
+                widget = self.dm_date_entry
+            else:
+                widget = self.dm_date_entry
+                fmt = self.dm_date_format_var.get()
+        else:
+            widget = self.dm_date_entry
+            fmt = self.dm_date_format_var.get()
+        if widget is None:
+            return
+        text = widget.get()
+        formatted = self._format_date_input(text, fmt)
         if formatted != text:
             widget.delete(0, "end")
             widget.insert(0, formatted)
         widget.icursor(len(widget.get()))
         # подсветка поля по валидности
-        self._mark_date_status()
+        if widget is self.dm_expiry_entry:
+            self._mark_expiry_status()
+        else:
+            self._mark_date_status()
         # обновляем живой макет
         self._update_live_mock()
 
-    def _mark_date_status(self) -> None:
-        """Подсвечивает поле даты: красная рамка при неверном значении."""
-        widget = getattr(self, "dm_date_entry", None)
+    def _mark_entry_status(self, widget, text: str, date_format: str,
+                           allow_future: bool) -> None:
+        """Подсвечивает поле: красная рамка при неверном значении."""
         if widget is None:
             return
-        err = self._validate_date_text(self.dm_date_var.get().strip())
+        err = self._validate_date_text(text, date_format, allow_future=allow_future)
         try:
             if self.dark_var.get():
                 bg = "#2b2b2b"
@@ -2572,61 +2622,103 @@ class ConverterGui:
         else:
             widget.configure(background=bg)
 
-    def _validate_date_text(self, text: str):
-        """Проверяет дату в форматах ДД.ММ.ГГГГ или ММ.ГГГГ.
+    def _mark_date_status(self) -> None:
+        """Подсвечивает поле даты производства по валидности."""
+        self._mark_entry_status(
+            getattr(self, "dm_date_entry", None),
+            self.dm_date_var.get().strip(),
+            self.dm_date_format_var.get(),
+            allow_future=False,
+        )
+
+    def _mark_expiry_status(self) -> None:
+        """Подсвечивает поле срока годности по валидности.
+        Будущее допускается (это конечная дата)."""
+        self._mark_entry_status(
+            getattr(self, "dm_expiry_entry", None),
+            self.dm_expiry_var.get().strip(),
+            self.dm_expiry_format_var.get(),
+            allow_future=True,
+        )
+
+    def _validate_date_text(self, text: str, date_format: str = "ММ.ГГГГ",
+                            allow_future: bool = False):
+        """Проверяет дату в одном из 4 форматов:
+        ММ.ГГГГ / ММ.ГГ / ДД.ММ.ГГГГ / ДД.ММ.ГГ.
         Возвращает None, если дата валидна, или текст ошибки.
-        Правила: день и месяц существуют; год не раньше 1900; дата
-        НЕ ПОЗЖЕ сегодняшнего дня (будущее запрещено; прошлое разрешено)."""
+        allow_future=False — будущее запрещено (дата производства);
+        allow_future=True — будущее допускается (срок годности).
+        Для 2-значного года (ГГ) год интерпретируется как 2000+ГГ."""
         text = text.strip()
         if not text:
             return None  # поле пустое — не ошибка (дата опциональна)
         import datetime
         today = datetime.date.today()
-        cur_year = today.year
         try:
             parts = text.split(".")
+            full_year = date_format.endswith("ГГГГ")
             if len(parts) == 3:
-                # ДД.ММ.ГГГГ
+                if date_format not in ("ДД.ММ.ГГГГ", "ДД.ММ.ГГ"):
+                    return "Неверный формат даты: ожидается ММ.ГГГГ / ММ.ГГ"
+                # ДД.ММ.ГГГГ или ДД.ММ.ГГ
                 day, month, year = (int(p) for p in parts)
                 if day < 1 or day > 31:
                     return f"Нет такого дня: {day}"
                 if month < 1 or month > 12:
                     return f"Нет такого месяца: {month}"
-                if year < 1900:
+                calendar_year = year + 2000 if not full_year else year
+                if year < 0 or year > 99 and not full_year:
+                    return "Год из двух цифр: 00..99"
+                if full_year and year < 1900:
                     return "Год не может быть раньше 1900"
                 import calendar
-                max_day = calendar.monthrange(year, month)[1]
+                max_day = calendar.monthrange(calendar_year, month)[1]
                 if day > max_day:
-                    return f"В месяце {month:02d}.{year} только {max_day} дней"
+                    return f"В месяце {month:02d} только {max_day} дней"
                 try:
-                    d = datetime.date(year, month, day)
+                    d = datetime.date(calendar_year, month, day)
                 except ValueError:
                     return "Неверная дата"
-                if d > today:
+                if not allow_future and d > today:
                     return "Дата производства не может быть позже сегодняшнего дня"
                 return None
             elif len(parts) == 2:
-                # ММ.ГГГГ
+                if date_format not in ("ММ.ГГГГ", "ММ.ГГ"):
+                    return "Неверный формат даты: ожидается ДД.ММ.ГГГГ / ДД.ММ.ГГ"
+                # ММ.ГГГГ или ММ.ГГ
                 month, year = (int(p) for p in parts)
                 if month < 1 or month > 12:
                     return f"Нет такого месяца: {month}"
-                if year < 1900:
+                calendar_year = year + 2000 if not full_year else year
+                if not full_year and (year < 0 or year > 99):
+                    return "Год из двух цифр: 00..99"
+                if full_year and year < 1900:
                     return "Год не может быть раньше 1900"
-                if (year, month) > (today.year, today.month):
+                if not allow_future and (calendar_year, month) > (today.year, today.month):
                     return "Дата производства не может быть позже текущего месяца"
                 return None
             else:
-                return "Неверный формат даты (ДД.ММ.ГГГГ или ММ.ГГГГ)"
+                return (f"Неверный формат даты ({date_format})")
         except Exception:
             return "Неверная дата"
 
     def _invalid_date_reason(self) -> str | None:
-        """Возвращает текст ошибки даты, если поле заполнено и невалидно,
-        иначе None. Используется для блокировки генерации."""
+        """Возвращает текст ошибки даты производства, если поле заполнено
+        и невалидно, иначе None. Используется для блокировки генерации."""
         text = self.dm_date_var.get().strip()
         if self.dm_show_date_var.get() is False or not text:
             return None
-        return self._validate_date_text(text)
+        return self._validate_date_text(
+            text, self.dm_date_format_var.get(), allow_future=False)
+
+    def _invalid_expiry_reason(self) -> str | None:
+        """Возвращает текст ошибки срока годности, если поле заполнено
+        и невалидно, иначе None. Будущее всегда допускается."""
+        text = self.dm_expiry_var.get().strip()
+        if self.dm_show_expiry_var.get() is False or not text:
+            return None
+        return self._validate_date_text(
+            text, self.dm_expiry_format_var.get(), allow_future=True)
 
     def _select_pdf(self) -> None:
         selected = filedialog.askopenfilenames(
@@ -3291,6 +3383,8 @@ class ConverterGui:
             "name": self.dm_name_var.get(),
             "date": self.dm_date_var.get(),
             "expiry": self.dm_expiry_var.get(),
+            "date_format": self.dm_date_format_var.get(),
+            "expiry_format": self.dm_expiry_format_var.get(),
             "batch": self.dm_batch_var.get(),
             "bold_name": bool(self.dm_bold_name_var.get()),
             "bold_date": bool(self.dm_bold_date_var.get()),
@@ -3320,6 +3414,8 @@ class ConverterGui:
             "size_expiry": (self.dm_size_expiry_var, str),
             "size_batch": (self.dm_size_batch_var, str),
             "size_code": (self.dm_size_code_var, str),
+            "date_format": (self.dm_date_format_var, str),
+            "expiry_format": (self.dm_expiry_format_var, str),
         }
         for key, (var, caster) in mapping.items():
             if key in profile and isinstance(profile[key], str):
@@ -3500,6 +3596,18 @@ class ConverterGui:
             except Exception:
                 pass
 
+        # формат дат производства и срока годности
+        for plain_key, var_name in (
+            ("dm_date_format", "dm_date_format_var"),
+            ("dm_expiry_format", "dm_expiry_format_var"),
+        ):
+            try:
+                val = data.get(plain_key)
+                if val in self.DATE_FORMATS:
+                    getattr(self, var_name).set(val)
+            except Exception:
+                pass
+
         # сохранённые шаблоны этикеток
         saved_profiles = data.get("profiles")
         if isinstance(saved_profiles, dict):
@@ -3533,6 +3641,8 @@ class ConverterGui:
             "dm_size_expiry": self.dm_size_expiry_var.get(),
             "dm_size_batch": self.dm_size_batch_var.get(),
             "dm_size_code": self.dm_size_code_var.get(),
+            "dm_date_format": self.dm_date_format_var.get(),
+            "dm_expiry_format": self.dm_expiry_format_var.get(),
             "profiles": self._profiles,
         }
         try:
