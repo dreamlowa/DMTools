@@ -1,5 +1,5 @@
 {
-  "version": "1.8.9",
-  "url": "https://github.com/dreamlowa/delfin-etiketki/releases/download/v1.8.9/DMTools.exe",
-  "notes": "Добавлена отдельная вкладка «Журнал» (как в 1С) — общий журнал событий программы: операции, статусы и ошибки со всех вкладок."
+  "version": "1.8.10",
+  "url": "https://github.com/dreamlowa/delfin-etiketki/releases/download/v1.8.10/DMTools.exe",
+  "notes": "Убраны внутренние журналы с вкладок — все события (операции, статусы, ошибки) теперь собираются только в общую вкладку «Журнал»."
 }

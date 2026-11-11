@@ -546,10 +546,9 @@ class ConverterGui:
         self.root.configure(bg=bg)
         if self.outer is not None:
             self.outer.configure(style="TFrame")
-        self.log.configure(bg=field, fg=fg, insertbackground=fg)
-        if hasattr(self, "dm_log"):
+        if hasattr(self, "global_log"):
             try:
-                self.dm_log.configure(bg=field, fg=fg, insertbackground=fg)
+                self.global_log.configure(bg=field, fg=fg, insertbackground=fg)
             except Exception:
                 pass
         if hasattr(self, "dm_preview_canvas"):
@@ -772,11 +771,6 @@ class ConverterGui:
         self.progress = ttk.Progressbar(outer, mode="determinate")
         self.progress.grid(row=9, column=0, columnspan=3, sticky="ew", pady=(0, 10))
 
-        self.log = scrolledtext.ScrolledText(
-            outer, wrap="word", state="disabled", font=("Consolas", 10)
-        )
-        self.log.grid(row=10, column=0, columnspan=3, sticky="nsew")
-
         # --- Вкладка 2: CSV -> DataMatrix ---
         tab2 = ttk.Frame(self.notebook, padding=12)
         self.notebook.add(tab2, text="CSV → DataMatrix")
@@ -982,12 +976,7 @@ class ConverterGui:
         self.dm_load_profile_button.grid(row=0, column=3)
         self._refresh_profiles_combo()
 
-        self.dm_log = scrolledtext.ScrolledText(
-            left, wrap="word", state="disabled", font=("Consolas", 10)
-        )
-        self.dm_log.grid(row=10, column=0, columnspan=3, sticky="nsew", pady=(0, 8))
-        # двойной клик по строке журнала — расшифровка найденного в ней кода
-        self.dm_log.bind("<Double-Button-1>", self._on_dm_log_double)
+        # внутренний журнал вкладки убран — всё идёт в общий «Журнал»
         left.rowconfigure(10, weight=1)
 
         ttk.Label(left, textvariable=self.dm_status_var, anchor="w").grid(
@@ -1112,6 +1101,8 @@ class ConverterGui:
             tab5, state="disabled", wrap="word", width=100, height=24
         )
         self.global_log.grid(row=1, column=0, sticky="nsew")
+        # двойной клик по строке журнала — расшифровка найденного в ней кода
+        self.global_log.bind("<Double-Button-1>", self._on_dm_log_double)
 
         log_btns = ttk.Frame(tab5)
         log_btns.grid(row=2, column=0, sticky="ew", pady=(8, 0))
@@ -1408,10 +1399,7 @@ class ConverterGui:
                 self._log_op(f"Проверка: код №{d['index']} — {detail}")
         text = "\n".join(lines)
 
-        self.dm_log.configure(state="normal")
-        self.dm_log.delete("1.0", "end")
-        self.dm_log.insert("end", text + "\n")
-        self.dm_log.configure(state="disabled")
+        self._global_log(text)
         self.dm_status_var.set(f"Проверка: {ok} из {total} корректных")
 
         if bad:
@@ -1524,8 +1512,8 @@ class ConverterGui:
         """Обрабатывает двойной клик по журналу: открывает расшифровку кода
         из строки под курсором, если там есть код маркировки."""
         try:
-            index = self.dm_log.index(f"@{event.x},{event.y}")
-            line = self.dm_log.get(f"{index} linestart", f"{index} lineend")
+            index = self.global_log.index(f"@{event.x},{event.y}")
+            line = self.global_log.get(f"{index} linestart", f"{index} lineend")
         except Exception:
             line = ""
         if line:
@@ -1584,15 +1572,8 @@ class ConverterGui:
             messagebox.showerror("Ошибка", "Выберите корректный размер этикетки")
             return
 
-        self.dm_log.configure(state="normal")
-        self.dm_log.delete("1.0", "end")
-        self.dm_log.configure(state="disabled")
-
         def _append_log(text: str) -> None:
-            self.dm_log.configure(state="normal")
-            self.dm_log.insert("end", text)
-            self.dm_log.see("end")
-            self.dm_log.configure(state="disabled")
+            self._global_log(str(text).rstrip())
 
         try:
             csv_text = self._collect_dm_csv_text()
@@ -3228,15 +3209,12 @@ class ConverterGui:
         self.stop_button.configure(state="normal" if running else "disabled")
 
     def _append_log(self, text: str) -> None:
-        self.log.configure(state="normal")
-        self.log.insert("end", text)
-        self.log.see("end")
-        self.log.configure(state="disabled")
+        # внутренний журнал вкладки убран — всё идёт в общий «Журнал»
+        self._global_log(str(text).rstrip())
 
     def _clear_log(self) -> None:
-        self.log.configure(state="normal")
-        self.log.delete("1.0", "end")
-        self.log.configure(state="disabled")
+        # внутренний журнал вкладки убран — очищаем общий «Журнал»
+        self._clear_global_log()
 
     def _log_op(self, message: str) -> None:
         """Пишет строку операции с меткой времени в файл журнала и в
