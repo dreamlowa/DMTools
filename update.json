@@ -1,5 +1,5 @@
 {
-  "version": "1.8.13",
-  "url": "https://github.com/dreamlowa/delfin-etiketki/releases/download/v1.8.13/DMTools.exe",
-  "notes": "Для «Даты производства» и «Срока годности» добавлен выбор формата: ММ.ГГГГ, ММ.ГГ, ДД.ММ.ГГГГ, ДД.ММ.ГГ. Формат задаёт и ввод, и вывод. Срок годности допускает будущие даты."
+  "version": "1.8.14",
+  "url": "https://github.com/dreamlowa/delfin-etiketki/releases/download/v1.8.14/DMTools.exe",
+  "notes": "Поля «Дата произв.» и «Срок годности»: выбор формата размещён перед полем ввода, само поле укорочено до размера даты."
 }
