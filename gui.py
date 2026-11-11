@@ -789,12 +789,21 @@ class ConverterGui:
         tab2_body.columnconfigure(1, weight=0)
 
         # ===== Левая часть: настройки =====
+        # Единая сетка формы: колонка 0 — подписи (прижаты к правому краю,
+        # чтобы все поля начинались на одной вертикальной линии), колонка 1 —
+        # поля ввода, колонки 2-4 — вспомогательные элементы. Доп. элементы у
+        # полей (формат даты, «Жирн.», размер шрифта) собраны в компактный
+        # под-фрейм прямо у поля, чтобы ничего не «вываливалось» в дальние колонки.
         left = ttk.Frame(tab2_body, padding=(0, 0, 12, 0))
         left.grid(row=0, column=0, sticky="nsew")
+        left.columnconfigure(0, weight=0)
         left.columnconfigure(1, weight=1)
+        for _c in (2, 3, 4):
+            left.columnconfigure(_c, weight=0)
 
-        ttk.Label(left, text="Файл CSV (по одному коду в строке):").grid(
-            row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+        # --- Строка: файл CSV ---
+        ttk.Label(left, text="Файл CSV (по одному коду\nв строке):").grid(
+            row=0, column=0, sticky="e", padx=(0, 8), pady=(0, 8)
         )
         self.dm_csv_entry = ttk.Entry(left, textvariable=self.dm_csv_var)
         self.dm_csv_entry.grid(row=0, column=1, sticky="ew", pady=(0, 8))
@@ -807,9 +816,9 @@ class ConverterGui:
         )
         self.dm_pick_folder_btn.grid(row=0, column=3, padx=(8, 0), pady=(0, 8))
 
-        # Группа товара
+        # --- Строка: группа товара ---
         ttk.Label(left, text="Группа товара:").grid(
-            row=1, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+            row=1, column=0, sticky="e", padx=(0, 8), pady=(0, 8)
         )
         groups = [
             "— без группы —", "Медизделия", "Духи/парфюмерия", "Косметика",
@@ -822,9 +831,9 @@ class ConverterGui:
         self.dm_group_combo.grid(row=1, column=1, sticky="w", pady=(0, 8))
         self.dm_group_combo.bind("<<ComboboxSelected>>", self._on_dm_group_change)
 
-        # Размер этикетки
+        # --- Строка: размер этикетки ---
         ttk.Label(left, text="Размер этикетки (мм):").grid(
-            row=2, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+            row=2, column=0, sticky="e", padx=(0, 8), pady=(0, 8)
         )
         self.dm_size_combo = ttk.Combobox(
             left, textvariable=self.dm_label_size_var,
@@ -834,90 +843,99 @@ class ConverterGui:
         self.dm_size_combo.grid(row=2, column=1, sticky="w", pady=(0, 8))
         self.dm_size_combo.bind("<<ComboboxSelected>>", self._on_preview_input_change)
 
-        # Дата производства
+        # --- Строка: дата производства (поле + формат + «Жирн.» + размер) ---
         ttk.Label(left, text="Дата произв.:").grid(
-            row=3, column=0, sticky="w", padx=(0, 8), pady=(0, 3)
+            row=3, column=0, sticky="e", padx=(0, 8), pady=(0, 8)
         )
+        date_row = ttk.Frame(left)
+        date_row.grid(row=3, column=1, sticky="w", pady=(0, 8))
+        self.dm_date_entry = ttk.Entry(date_row, textvariable=self.dm_date_var, width=11)
+        self.dm_date_entry.pack(side="left")
+        self.dm_date_entry.bind("<KeyRelease>", self._on_date_format)
         self.dm_date_fmt_combo = ttk.Combobox(
-            left, textvariable=self.dm_date_format_var,
+            date_row, textvariable=self.dm_date_format_var,
             values=self.DATE_FORMATS, state="readonly", width=9,
         )
-        self.dm_date_fmt_combo.grid(row=3, column=1, sticky="w", pady=(0, 3))
+        self.dm_date_fmt_combo.pack(side="left", padx=(8, 0))
         self.dm_date_fmt_combo.bind("<<ComboboxSelected>>", self._on_date_format)
-        self.dm_date_entry = ttk.Entry(
-            left, textvariable=self.dm_date_var, width=10
-        )
-        self.dm_date_entry.grid(row=3, column=2, sticky="w", padx=(4, 0), pady=(0, 3))
-        self.dm_date_entry.bind("<KeyRelease>", self._on_date_format)
         self.dm_bold_date_check = ttk.Checkbutton(
-            left, text="Жирн.", variable=self.dm_bold_date_var, command=self._on_show_change
+            date_row, text="Жирн.", variable=self.dm_bold_date_var, command=self._on_show_change
         )
-        self.dm_bold_date_check.grid(row=3, column=3, sticky="w", padx=(8, 0), pady=(0, 3))
+        self.dm_bold_date_check.pack(side="left", padx=(12, 0))
         self.dm_size_date_spin = ttk.Spinbox(
-            left, from_=2, to=20, increment=0.5, width=4,
+            date_row, from_=2, to=20, increment=0.5, width=4,
             textvariable=self.dm_size_date_var, command=self._on_show_change,
         )
-        self.dm_size_date_spin.grid(row=3, column=4, sticky="w", padx=(4, 0), pady=(0, 3))
+        self.dm_size_date_spin.pack(side="left", padx=(8, 0))
 
-        # Срок годности (сразу после даты производства)
+        # --- Строка: срок годности (аналогично дате производства) ---
         ttk.Label(left, text="Срок годности:").grid(
-            row=4, column=0, sticky="w", padx=(0, 8), pady=(0, 3)
+            row=4, column=0, sticky="e", padx=(0, 8), pady=(0, 8)
         )
+        expiry_row = ttk.Frame(left)
+        expiry_row.grid(row=4, column=1, sticky="w", pady=(0, 8))
+        self.dm_expiry_entry = ttk.Entry(
+            expiry_row, textvariable=self.dm_expiry_var, width=11
+        )
+        self.dm_expiry_entry.pack(side="left")
+        self.dm_expiry_entry.bind("<KeyRelease>", self._on_date_format)
         self.dm_expiry_fmt_combo = ttk.Combobox(
-            left, textvariable=self.dm_expiry_format_var,
+            expiry_row, textvariable=self.dm_expiry_format_var,
             values=self.DATE_FORMATS, state="readonly", width=9,
         )
-        self.dm_expiry_fmt_combo.grid(row=4, column=1, sticky="w", pady=(0, 3))
+        self.dm_expiry_fmt_combo.pack(side="left", padx=(8, 0))
         self.dm_expiry_fmt_combo.bind("<<ComboboxSelected>>", self._on_date_format)
-        self.dm_expiry_entry = ttk.Entry(
-            left, textvariable=self.dm_expiry_var, width=10
-        )
-        self.dm_expiry_entry.grid(row=4, column=2, sticky="w", padx=(4, 0), pady=(0, 3))
-        self.dm_expiry_entry.bind("<KeyRelease>", self._on_date_format)
         self.dm_bold_expiry_check = ttk.Checkbutton(
-            left, text="Жирн.", variable=self.dm_bold_expiry_var, command=self._on_show_change
+            expiry_row, text="Жирн.", variable=self.dm_bold_expiry_var, command=self._on_show_change
         )
-        self.dm_bold_expiry_check.grid(row=4, column=3, sticky="w", padx=(8, 0), pady=(0, 3))
+        self.dm_bold_expiry_check.pack(side="left", padx=(12, 0))
         self.dm_size_expiry_spin = ttk.Spinbox(
-            left, from_=2, to=20, increment=0.5, width=4,
+            expiry_row, from_=2, to=20, increment=0.5, width=4,
             textvariable=self.dm_size_expiry_var, command=self._on_show_change,
         )
-        self.dm_size_expiry_spin.grid(row=4, column=4, sticky="w", padx=(4, 0), pady=(0, 3))
+        self.dm_size_expiry_spin.pack(side="left", padx=(8, 0))
 
+        # --- Строка: партия ---
         ttk.Label(left, text="Партия:").grid(
-            row=5, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+            row=5, column=0, sticky="e", padx=(0, 8), pady=(0, 8)
         )
-        self.dm_batch_entry = ttk.Entry(left, textvariable=self.dm_batch_var)
-        self.dm_batch_entry.grid(row=5, column=1, sticky="ew", pady=(0, 8))
+        batch_row = ttk.Frame(left)
+        batch_row.grid(row=5, column=1, sticky="w", pady=(0, 8))
+        self.dm_batch_entry = ttk.Entry(batch_row, textvariable=self.dm_batch_var, width=28)
+        self.dm_batch_entry.pack(side="left")
         self.dm_batch_entry.bind("<KeyRelease>", self._on_preview_input_change)
         self.dm_bold_batch_check = ttk.Checkbutton(
-            left, text="Жирн.", variable=self.dm_bold_batch_var, command=self._on_show_change
+            batch_row, text="Жирн.", variable=self.dm_bold_batch_var, command=self._on_show_change
         )
-        self.dm_bold_batch_check.grid(row=5, column=2, sticky="w", padx=(8, 0), pady=(0, 8))
+        self.dm_bold_batch_check.pack(side="left", padx=(12, 0))
         self.dm_size_batch_spin = ttk.Spinbox(
-            left, from_=2, to=20, increment=0.5, width=4,
+            batch_row, from_=2, to=20, increment=0.5, width=4,
             textvariable=self.dm_size_batch_var, command=self._on_show_change,
         )
-        self.dm_size_batch_spin.grid(row=5, column=3, sticky="w", padx=(4, 0), pady=(0, 8))
+        self.dm_size_batch_spin.pack(side="left", padx=(8, 0))
 
+        # --- Строка: наименование ---
         ttk.Label(left, text="Наименование:").grid(
-            row=6, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+            row=6, column=0, sticky="e", padx=(0, 8), pady=(0, 8)
         )
-        self.dm_name_entry = ttk.Entry(left, textvariable=self.dm_name_var)
-        self.dm_name_entry.grid(row=6, column=1, sticky="ew", pady=(0, 8))
+        name_row = ttk.Frame(left)
+        name_row.grid(row=6, column=1, sticky="w", pady=(0, 8))
+        self.dm_name_entry = ttk.Entry(name_row, textvariable=self.dm_name_var, width=28)
+        self.dm_name_entry.pack(side="left")
         self.dm_name_entry.bind("<KeyRelease>", self._on_preview_input_change)
         self.dm_bold_name_check = ttk.Checkbutton(
-            left, text="Жирн.", variable=self.dm_bold_name_var, command=self._on_show_change
+            name_row, text="Жирн.", variable=self.dm_bold_name_var, command=self._on_show_change
         )
-        self.dm_bold_name_check.grid(row=6, column=2, sticky="w", padx=(8, 0), pady=(0, 8))
+        self.dm_bold_name_check.pack(side="left", padx=(12, 0))
         self.dm_size_name_spin = ttk.Spinbox(
-            left, from_=2, to=20, increment=0.5, width=4,
+            name_row, from_=2, to=20, increment=0.5, width=4,
             textvariable=self.dm_size_name_var, command=self._on_show_change,
         )
-        self.dm_size_name_spin.grid(row=6, column=3, sticky="w", padx=(4, 0), pady=(0, 8))
+        self.dm_size_name_spin.pack(side="left", padx=(8, 0))
 
+        # --- Строка: сохранить PDF ---
         ttk.Label(left, text="Сохранить PDF:").grid(
-            row=7, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+            row=7, column=0, sticky="e", padx=(0, 8), pady=(0, 8)
         )
         self.dm_pdf_entry = ttk.Entry(left, textvariable=self.dm_pdf_var)
         self.dm_pdf_entry.grid(row=7, column=1, sticky="ew", pady=(0, 8))
@@ -925,82 +943,84 @@ class ConverterGui:
             row=7, column=2, padx=(8, 0), pady=(0, 8)
         )
 
-        ttk.Label(left, text="Показывать на этикетке:").grid(
-            row=8, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+        # --- Строка: показывать на этикетке (галочки в 2 аккуратных ряда) ---
+        ttk.Label(left, text="Показывать\nна этикетке:").grid(
+            row=8, column=0, sticky="e", padx=(0, 8), pady=(0, 8)
         )
-
         show_opts = ttk.Frame(left)
-        show_opts.grid(row=8, column=1, columnspan=2, sticky="w", pady=(0, 8))
+        show_opts.grid(row=8, column=1, columnspan=4, sticky="w", pady=(0, 8))
+        show_opts.columnconfigure(3, weight=1)
         self.dm_show_date_check = ttk.Checkbutton(
             show_opts, text="Дата произв.", variable=self.dm_show_date_var, command=self._on_show_change
         )
-        self.dm_show_date_check.grid(row=0, column=0, sticky="w", padx=(0, 12))
+        self.dm_show_date_check.grid(row=0, column=0, sticky="w", padx=(0, 16))
         self.dm_show_expiry_check = ttk.Checkbutton(
             show_opts, text="Срок годн.", variable=self.dm_show_expiry_var, command=self._on_show_change
         )
-        self.dm_show_expiry_check.grid(row=1, column=0, sticky="w", padx=(0, 12))
+        self.dm_show_expiry_check.grid(row=0, column=1, sticky="w", padx=(0, 16))
         self.dm_show_batch_check = ttk.Checkbutton(
             show_opts, text="Партия", variable=self.dm_show_batch_var, command=self._on_show_change
         )
-        self.dm_show_batch_check.grid(row=0, column=1, sticky="w", padx=(0, 12))
-        self.dm_show_code_check = ttk.Checkbutton(
-            show_opts, text="Код маркировки", variable=self.dm_show_code_var, command=self._on_show_change
-        )
-        self.dm_show_code_check.grid(row=0, column=2, sticky="w")
-        self.dm_bold_code_check = ttk.Checkbutton(
-            show_opts, text="жирн.", variable=self.dm_bold_code_var, command=self._on_show_change
-        )
-        self.dm_bold_code_check.grid(row=0, column=3, sticky="w", padx=(4, 0))
-        self.dm_size_code_spin = ttk.Spinbox(
-            show_opts, from_=2, to=20, increment=0.5, width=4,
-            textvariable=self.dm_size_code_var, command=self._on_show_change,
-        )
-        self.dm_size_code_spin.grid(row=0, column=4, sticky="w", padx=(4, 0))
+        self.dm_show_batch_check.grid(row=0, column=2, sticky="w", padx=(0, 16))
         self.dm_show_short_check = ttk.Checkbutton(
             show_opts, text="Укороченный код", variable=self.dm_show_short_var,
             command=self._on_show_change,
         )
-        self.dm_show_short_check.grid(row=1, column=1, columnspan=3, sticky="w", pady=(4, 0))
+        self.dm_show_short_check.grid(row=0, column=3, sticky="w", pady=(4, 0))
+        self.dm_show_code_check = ttk.Checkbutton(
+            show_opts, text="Код маркировки", variable=self.dm_show_code_var, command=self._on_show_change
+        )
+        self.dm_show_code_check.grid(row=1, column=0, sticky="w", pady=(6, 0), padx=(0, 4))
+        self.dm_bold_code_check = ttk.Checkbutton(
+            show_opts, text="жирн.", variable=self.dm_bold_code_var, command=self._on_show_change
+        )
+        self.dm_bold_code_check.grid(row=1, column=1, sticky="w", pady=(6, 0), padx=(0, 4))
+        self.dm_size_code_spin = ttk.Spinbox(
+            show_opts, from_=2, to=20, increment=0.5, width=4,
+            textvariable=self.dm_size_code_var, command=self._on_show_change,
+        )
+        self.dm_size_code_spin.grid(row=1, column=2, sticky="w", pady=(6, 0))
 
+        # --- Строка: кнопки действий (в одну ровную линейку с равными отступами) ---
         dm_actions = ttk.Frame(left)
-        dm_actions.grid(row=9, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        dm_actions.grid(row=9, column=0, columnspan=5, sticky="ew", pady=(4, 8))
         self.dm_generate_button = ttk.Button(
             dm_actions, text="Сгенерировать PDF", command=self._generate_dm_pdf
         )
-        self.dm_generate_button.grid(row=0, column=0, padx=(0, 8))
+        self.dm_generate_button.grid(row=0, column=0, padx=(0, 6), pady=2)
         self.dm_openpdf_button = ttk.Button(
             dm_actions, text="Открыть PDF", command=self._open_dm_pdf
         )
-        self.dm_openpdf_button.grid(row=0, column=1, padx=(0, 8))
+        self.dm_openpdf_button.grid(row=0, column=1, padx=(0, 6), pady=2)
         self.dm_preview_button = ttk.Button(
             dm_actions, text="Предпросмотр", command=self._open_full_preview
         )
-        self.dm_preview_button.grid(row=0, column=2, padx=(0, 8))
+        self.dm_preview_button.grid(row=0, column=2, padx=(0, 6), pady=2)
         self.dm_print_button = ttk.Button(
             dm_actions, text="Печать", command=self._print_dm_pdf
         )
-        self.dm_print_button.grid(row=0, column=3, padx=(0, 8))
+        self.dm_print_button.grid(row=0, column=3, padx=(0, 6), pady=2)
         self.dm_openfolder_button = ttk.Button(
             dm_actions, text="Открыть папку", command=self._open_dm_output_folder
         )
-        self.dm_openfolder_button.grid(row=0, column=4, padx=(0, 8))
+        self.dm_openfolder_button.grid(row=0, column=4, padx=(0, 6), pady=2)
         self.dm_checkcodes_button = ttk.Button(
             dm_actions, text="Проверить коды", command=self._check_dm_codes
         )
-        self.dm_checkcodes_button.grid(row=0, column=5, padx=(0, 8))
+        self.dm_checkcodes_button.grid(row=0, column=5, padx=(0, 6), pady=2)
         self.dm_exportpng_button = ttk.Button(
             dm_actions, text="Экспорт PNG", command=self._export_dm_png
         )
-        self.dm_exportpng_button.grid(row=0, column=6, padx=(0, 8))
+        self.dm_exportpng_button.grid(row=0, column=6, padx=(0, 6), pady=2)
 
         self.dm_action_row = dm_actions
 
-        # Шаблоны этикеток (профили настроек)
+        # --- Строка: шаблоны этикеток (профили настроек) ---
         profile_row = ttk.Frame(left)
-        profile_row.grid(row=10, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        profile_row.grid(row=10, column=0, columnspan=5, sticky="ew", pady=(0, 8))
         profile_row.columnconfigure(1, weight=1)
         ttk.Label(profile_row, text="Шаблон:").grid(
-            row=0, column=0, sticky="w", padx=(0, 8)
+            row=0, column=0, sticky="e", padx=(0, 8)
         )
         self.dm_profiles_combo = ttk.Combobox(
             profile_row, textvariable=self.dm_profile_name_var,
@@ -1022,12 +1042,12 @@ class ConverterGui:
         left.rowconfigure(11, weight=1)
 
         ttk.Label(left, textvariable=self.dm_status_var, anchor="w").grid(
-            row=12, column=0, columnspan=3, sticky="ew"
+            row=12, column=0, columnspan=5, sticky="ew"
         )
         self.dm_progress = ttk.Progressbar(left, mode="determinate", maximum=100)
-        self.dm_progress.grid(row=13, column=0, columnspan=3, sticky="ew", pady=(4, 0))
+        self.dm_progress.grid(row=13, column=0, columnspan=5, sticky="ew", pady=(4, 0))
         self.dm_progress_label = ttk.Label(left, text="", anchor="w")
-        self.dm_progress_label.grid(row=14, column=0, columnspan=3, sticky="ew")
+        self.dm_progress_label.grid(row=14, column=0, columnspan=5, sticky="ew")
 
         # ===== Правая часть: живой макет одной этикетки =====
         live_frame = ttk.LabelFrame(tab2_body, text="Макет этикетки (пример)")

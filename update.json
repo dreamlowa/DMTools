@@ -1,5 +1,5 @@
 {
-  "version": "1.8.15",
-  "url": "https://github.com/dreamlowa/delfin-etiketki/releases/download/v1.8.15/DMTools.exe",
-  "notes": "Сжаты вертикальные отступы между полями — строки даты/срока стали компактнее."
+  "version": "1.8.16",
+  "url": "https://github.com/dreamlowa/delfin-etiketki/releases/download/v1.8.16/DMTools.exe",
+  "notes": "Переделан дизайн вкладки этикеток: ровные колонки, выровненные подписи, формат дат рядом с полем, аккуратные кнопки и галочки."
 }
