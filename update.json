@@ -1,5 +1,5 @@
 {
-  "version": "1.8.14",
-  "url": "https://github.com/dreamlowa/delfin-etiketki/releases/download/v1.8.14/DMTools.exe",
-  "notes": "Поля «Дата произв.» и «Срок годности»: выбор формата размещён перед полем ввода, само поле укорочено до размера даты."
+  "version": "1.8.15",
+  "url": "https://github.com/dreamlowa/delfin-etiketki/releases/download/v1.8.15/DMTools.exe",
+  "notes": "Сжаты вертикальные отступы между полями — строки даты/срока стали компактнее."
 }

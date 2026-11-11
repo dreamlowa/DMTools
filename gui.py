@@ -836,53 +836,53 @@ class ConverterGui:
 
         # Дата производства
         ttk.Label(left, text="Дата произв.:").grid(
-            row=3, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+            row=3, column=0, sticky="w", padx=(0, 8), pady=(0, 3)
         )
         self.dm_date_fmt_combo = ttk.Combobox(
             left, textvariable=self.dm_date_format_var,
             values=self.DATE_FORMATS, state="readonly", width=9,
         )
-        self.dm_date_fmt_combo.grid(row=3, column=1, sticky="w", pady=(0, 8))
+        self.dm_date_fmt_combo.grid(row=3, column=1, sticky="w", pady=(0, 3))
         self.dm_date_fmt_combo.bind("<<ComboboxSelected>>", self._on_date_format)
         self.dm_date_entry = ttk.Entry(
             left, textvariable=self.dm_date_var, width=10
         )
-        self.dm_date_entry.grid(row=3, column=2, sticky="w", padx=(4, 0), pady=(0, 8))
+        self.dm_date_entry.grid(row=3, column=2, sticky="w", padx=(4, 0), pady=(0, 3))
         self.dm_date_entry.bind("<KeyRelease>", self._on_date_format)
         self.dm_bold_date_check = ttk.Checkbutton(
             left, text="Жирн.", variable=self.dm_bold_date_var, command=self._on_show_change
         )
-        self.dm_bold_date_check.grid(row=3, column=3, sticky="w", padx=(8, 0), pady=(0, 8))
+        self.dm_bold_date_check.grid(row=3, column=3, sticky="w", padx=(8, 0), pady=(0, 3))
         self.dm_size_date_spin = ttk.Spinbox(
             left, from_=2, to=20, increment=0.5, width=4,
             textvariable=self.dm_size_date_var, command=self._on_show_change,
         )
-        self.dm_size_date_spin.grid(row=3, column=4, sticky="w", padx=(4, 0), pady=(0, 8))
+        self.dm_size_date_spin.grid(row=3, column=4, sticky="w", padx=(4, 0), pady=(0, 3))
 
         # Срок годности (сразу после даты производства)
         ttk.Label(left, text="Срок годности:").grid(
-            row=4, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+            row=4, column=0, sticky="w", padx=(0, 8), pady=(0, 3)
         )
         self.dm_expiry_fmt_combo = ttk.Combobox(
             left, textvariable=self.dm_expiry_format_var,
             values=self.DATE_FORMATS, state="readonly", width=9,
         )
-        self.dm_expiry_fmt_combo.grid(row=4, column=1, sticky="w", pady=(0, 8))
+        self.dm_expiry_fmt_combo.grid(row=4, column=1, sticky="w", pady=(0, 3))
         self.dm_expiry_fmt_combo.bind("<<ComboboxSelected>>", self._on_date_format)
         self.dm_expiry_entry = ttk.Entry(
             left, textvariable=self.dm_expiry_var, width=10
         )
-        self.dm_expiry_entry.grid(row=4, column=2, sticky="w", padx=(4, 0), pady=(0, 8))
+        self.dm_expiry_entry.grid(row=4, column=2, sticky="w", padx=(4, 0), pady=(0, 3))
         self.dm_expiry_entry.bind("<KeyRelease>", self._on_date_format)
         self.dm_bold_expiry_check = ttk.Checkbutton(
             left, text="Жирн.", variable=self.dm_bold_expiry_var, command=self._on_show_change
         )
-        self.dm_bold_expiry_check.grid(row=4, column=3, sticky="w", padx=(8, 0), pady=(0, 8))
+        self.dm_bold_expiry_check.grid(row=4, column=3, sticky="w", padx=(8, 0), pady=(0, 3))
         self.dm_size_expiry_spin = ttk.Spinbox(
             left, from_=2, to=20, increment=0.5, width=4,
             textvariable=self.dm_size_expiry_var, command=self._on_show_change,
         )
-        self.dm_size_expiry_spin.grid(row=4, column=4, sticky="w", padx=(4, 0), pady=(0, 8))
+        self.dm_size_expiry_spin.grid(row=4, column=4, sticky="w", padx=(4, 0), pady=(0, 3))
 
         ttk.Label(left, text="Партия:").grid(
             row=5, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
