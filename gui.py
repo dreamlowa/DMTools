@@ -177,7 +177,7 @@ class ConverterGui:
 
         # видимость вкладок (галочки в меню «Вид»)
         self._tab_order = ["PDF → CSV", "CSV → DataMatrix",
-                           "Предпросмотр", "Быстрый DataMatrix", "Журнал"]
+                           "Быстрый DataMatrix", "Журнал"]
         self._tab_visible = {name: tk.BooleanVar(value=True)
                              for name in self._tab_order}
 
@@ -237,9 +237,6 @@ class ConverterGui:
         view_menu.add_checkbutton(
             label="CSV → DataMatrix", variable=self._tab_visible["CSV → DataMatrix"],
             command=lambda: self._toggle_tab("CSV → DataMatrix"))
-        view_menu.add_checkbutton(
-            label="Предпросмотр", variable=self._tab_visible["Предпросмотр"],
-            command=lambda: self._toggle_tab("Предпросмотр"))
         view_menu.add_checkbutton(
             label="Быстрый DataMatrix", variable=self._tab_visible["Быстрый DataMatrix"],
             command=lambda: self._toggle_tab("Быстрый DataMatrix"))
@@ -1002,49 +999,9 @@ class ConverterGui:
         # при первом построении интерфейса рисуем пустой макет
         self.root.after(100, self._update_live_mock)
 
-        # --- Вкладка 3: Полный предпросмотр всех этикеток ---
-        tab3 = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(tab3, text="Предпросмотр")
-        tab3.columnconfigure(0, weight=1)
-        tab3.rowconfigure(1, weight=1)
-
-        ttk.Label(
-            tab3,
-            text="Полный предпросмотр всех этикеток. Нажмите «Обновить», "
-                 "чтобы перестроить его по текущим настройкам.",
-        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
-
-        self.dm_full_preview_canvas = tk.Canvas(
-            tab3, bg="#ffffff", highlightthickness=0, yscrollcommand=None
-        )
-        self.dm_full_preview_canvas.grid(row=1, column=0, sticky="nsew")
-        self.dm_full_preview_scrollbar = ttk.Scrollbar(
-            tab3, orient="vertical", command=self.dm_full_preview_canvas.yview
-        )
-        self.dm_full_preview_scrollbar.grid(row=1, column=1, sticky="ns")
-        self.dm_full_preview_canvas.configure(
-            yscrollcommand=self.dm_full_preview_scrollbar.set
-        )
-
-        # колесо мыши на полном предпросмотре
-        def _on_fullwheel(event) -> None:
-            if self.dm_full_preview_canvas.winfo_exists():
-                self.dm_full_preview_canvas.yview_scroll(
-                    int(-1 * (event.delta / 120)), "units"
-                )
-
-        self.dm_full_preview_canvas.bind(
-            "<Enter>", lambda _e: self.dm_full_preview_canvas.bind_all(
-                "<MouseWheel>", _on_fullwheel)
-        )
-        self.dm_full_preview_canvas.bind(
-            "<Leave>", lambda _e: self.dm_full_preview_canvas.unbind_all("<MouseWheel>")
-        )
-
-        ttk.Button(
-            tab3, text="Обновить предпросмотр",
-            command=lambda: self._render_full_preview(),
-        ).grid(row=0, column=1, sticky="e", pady=(0, 8))
+        # --- Вкладка 3: Полный предпросмотр убран из вкладок — открывается
+        # отдельным модальным окном по кнопке «Предпросмотр» (_open_full_preview).
+        # Канвас для него создаётся внутри модального окна.
 
         # --- Вкладка 4: Быстрый DataMatrix (одиночный код для проверки) ---
         tab4 = ttk.Frame(self.notebook, padding=10)
