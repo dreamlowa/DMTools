@@ -1,5 +1,5 @@
 {
-  "version": "1.8.21",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.21/DMTools.exe",
-  "notes": "Улучшения дизайна: зелёная кнопка «Сгенерировать PDF», группировка в блоки «Данные этикетки»/«Вывод», подписи ошибок у дат, иконки на кнопках, подсказки-тултипы."
+  "version": "1.8.22",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.22/DMTools.exe",
+  "notes": "Поддержка сканера штрихкодов в клавиатурном режиме: код из любого поля кода + Enter автоматически переносится во вкладку «Быстрый DataMatrix» и запускает проверку."
 }

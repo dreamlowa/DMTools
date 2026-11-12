@@ -343,6 +343,9 @@ class ConverterGui:
     def _changelog_text() -> str:
         """Текст журнала изменений для окна «О программе»."""
         return (
+            "Текущая версия — см. «Обновления» (поддержка сканера штрихкодов\n"
+            "в клавиатурном режиме: код из любого поля + Enter → проверка).\n"
+            "\n"
             "v1.2.0 — верхнее меню «Справка → О программе» с версией и журналом изменений.\n"
             "\n"
             "v1.1.1 — исправлено «Не найден zint.exe» (zint упакован в EXE);\n"
@@ -1315,7 +1318,10 @@ class ConverterGui:
             tab4,
             text="Вставьте один код маркировки («Честный знак») — программа проверит "
                  "его структуру и покажет DataMatrix 25×25 мм в полном размере "
-                 "(читается при наведении телефона).",
+                 "(читается при наведении телефона).\n"
+                 "Поддерживается сканер штрихкодов в клавиатурном режиме: введите "
+                 "код в любое поле кода и нажмите Enter — программа перенесёт его "
+                 "сюда и запустит проверку.",
         ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
 
         qrow = ttk.Frame(tab4)
@@ -1333,11 +1339,8 @@ class ConverterGui:
         ttk.Button(qrow, text="Проверить", command=self._quick_generate,
                    style="Accent.TButton").grid(
             row=2, column=0, sticky="w", padx=(0, 6), pady=(6, 0))
-        # текст кода — только первая строка: код всегда один
-        self.quick_code_text.bind(
-            "<Return>",
-            lambda _e: "break",
-        )
+        # Enter запускает проверку/генерацию — так работают сканеры штрихкодов
+        self.quick_code_text.bind("<Return>", self._quick_generate)
 
         ttk.Label(tab4, textvariable=self.quick_status_var).grid(
             row=2, column=0, columnspan=3, sticky="w", pady=(0, 8))
@@ -1376,6 +1379,8 @@ class ConverterGui:
 
         # перетаскивание вкладок мышкой
         self._setup_tab_drag()
+        # приём сканера штрихкодов (клавиатурный режим)
+        self._setup_scanner()
 
         # после отрисовки всех элементов подгоняем размер окна под содержимое,
         # чтобы ни нижняя, ни правая граница не обрезали контент
@@ -2301,6 +2306,89 @@ class ConverterGui:
                 self.notebook.hide(tab_id)
         except Exception:
             pass
+
+    def _setup_scanner(self) -> None:
+        """Готовит приём сканера штрихкодов (клавиатурный режим).
+
+        Сканер работает как обычная клавиатура: вводит код в активное поле и
+        шлёт Enter. Чтобы сканер работал «в любом поле кода», слушаем Enter
+        на корневом окне: если это не поле «Быстрый DataMatrix», то введённый
+        в активное поле текст переносим туда и запускаем генерацию. Это делает
+        работу сканера удобной из любой точки окна.
+        """
+        if not hasattr(self, "root"):
+            return
+
+        def _on_enter(event=None) -> None:
+            # если активно поле быстрого DataMatrix — там Enter уже обрабатывается
+            try:
+                focus = self.root.focus_get()
+                if focus is getattr(self, "quick_code_text", None):
+                    self._quick_generate()
+                    return "break"
+            except Exception:
+                pass
+            # если активное поле имеет какой-то текст — переносим его во вкладку
+            try:
+                if focus is not None and hasattr(focus, "get"):
+                    try:
+                        val = str(focus.get()).strip()
+                    except Exception:
+                        val = ""
+                elif focus is not None and hasattr(focus, "get_view"):
+                    try:
+                        val = str(focus.get("1.0", "end-1c")).strip()
+                    except Exception:
+                        val = ""
+                else:
+                    val = ""
+                if val and self._looks_like_code(val):
+                    # похоже на код — кладём в Быстрый DataMatrix и открываем его
+                    self._set_quick_code(val)
+                    self._select_tab("Быстрый DataMatrix")
+                    self._quick_generate()
+                    return "break"
+            except Exception:
+                pass
+            return None
+
+        # Привязываем на корневое окно (после ввода в любое поле)
+        self.root.bind("<Return>", _on_enter, add="+")
+
+    @staticmethod
+    def _looks_like_code(val: str) -> bool:
+        """Эвристика: похож ли текст на код маркировки (длинная строка без
+        пробелов, только цифры и допустимые символы GS-датаматрикса)."""
+        if len(val) < 14:
+            return False
+        if any(ch.isspace() for ch in val):
+            return False
+        # допустимые символы: цифры, латиница, скобки (AI), разделитель GS, дефис
+        allowed = set(
+            "0123456789" + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+            + "()\x1d-#%&/.*"
+        )
+        return all(ch in allowed for ch in val)
+
+    def _select_tab(self, tab_text: str) -> None:
+        """Активирует (показывает и переключает) вкладку по её тексту."""
+        try:
+            self._tab_visible[tab_text].set(True)
+            shown = [t for t in self._tab_order if self._tab_visible[t].get()]
+            for tid in self.notebook.tabs():
+                if self.notebook.tab(tid, "text") == tab_text:
+                    self.notebook.select(tid)
+                    return
+        except Exception:
+            pass
+
+    def _set_quick_code(self, code: str) -> None:
+        """Кладёт код в поле «Быстрый DataMatrix»."""
+        if not hasattr(self, "quick_code_text"):
+            return
+        self.quick_code_text.delete("1.0", "end")
+        self.quick_code_text.insert("1.0", code)
+        self._tab_visible["Быстрый DataMatrix"].set(True)
 
     def _setup_tab_drag(self) -> None:
         """Включает перетаскивание вкладок мышкой (drag-and-drop).
