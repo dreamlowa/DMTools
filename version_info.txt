@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 8, 22, 0),
-    prodvers=(1, 8, 22, 0),
+    filevers=(1, 8, 23, 0),
+    prodvers=(1, 8, 23, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -18,7 +18,7 @@ StringStruct('FileDescription', 'DMTools'),
 StringStruct('InternalName', 'DMTools'),
 StringStruct('OriginalFilename', 'DMTools.exe'),
 StringStruct('ProductName', 'DMTools'),
-         StringStruct('ProductVersion', '1.8.22')])
+         StringStruct('ProductVersion', '1.8.23')])
     ]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])
   ]

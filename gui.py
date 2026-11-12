@@ -186,6 +186,7 @@ class ConverterGui:
         self.merge_csv_var = tk.BooleanVar(value=False)
         self.escape_mode_var = tk.StringVar(value="gs")
         self.dark_var = tk.BooleanVar(value=False)
+        self.scanner_enabled = tk.BooleanVar(value=True)
         self.status_var = tk.StringVar(value="Выберите PDF-файл или папку")
 
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
@@ -300,6 +301,13 @@ class ConverterGui:
             label="Журнал", variable=self._tab_visible["Журнал"],
             command=lambda: self._toggle_tab("Журнал"))
         menubar.add_cascade(label="Вид", menu=view_menu)
+
+        scanner_menu = tk.Menu(menubar, tearoff=0)
+        scanner_menu.add_checkbutton(
+            label="Приём сканера", variable=self.scanner_enabled,
+            command=self._apply_scanner_enabled)
+        scanner_menu.add_command(label="Проверить сканер…", command=self._show_scanner_check)
+        menubar.add_cascade(label="Сканер", menu=scanner_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0)
         help_menu.add_command(label="Проверить обновления", command=self._check_updates_manual)
@@ -2319,6 +2327,11 @@ class ConverterGui:
         if not hasattr(self, "root"):
             return
 
+        self._scanner_on_enter = self._make_scanner_enter_handler()
+        self._apply_scanner_enabled()
+
+    def _make_scanner_enter_handler(self):
+        """Создаёт и возвращает обработчик Enter сканера (для вкл/выкл приёма)."""
         def _on_enter(event=None) -> None:
             # если активно поле быстрого DataMatrix — там Enter уже обрабатывается
             try:
@@ -2343,17 +2356,89 @@ class ConverterGui:
                 else:
                     val = ""
                 if val and self._looks_like_code(val):
-                    # похоже на код — кладём в Быстрый DataMatrix и открываем его
-                    self._set_quick_code(val)
-                    self._select_tab("Быстрый DataMatrix")
-                    self._quick_generate()
+                    self._on_scanner_code(val)
                     return "break"
             except Exception:
                 pass
             return None
+        self._scanner_counter: int = 0
+        return _on_enter
 
-        # Привязываем на корневое окно (после ввода в любое поле)
-        self.root.bind("<Return>", _on_enter, add="+")
+    def _apply_scanner_enabled(self) -> None:
+        """Включает/выключает глобальный приём сканера по галочке в меню."""
+        if not hasattr(self, "root"):
+            return
+        if self.scanner_enabled.get():
+            self.root.bind("<Return>", self._scanner_on_enter, add="+")
+        else:
+            try:
+                self.root.unbind("<Return>", self._scanner_on_enter)
+            except Exception:
+                pass
+
+    def _on_scanner_code(self, val: str) -> None:
+        """Сканированный код: инкремент счётчика и перенос в Быстрый DataMatrix."""
+        self._scanner_counter = getattr(self, "_scanner_counter", 0) + 1
+        self._set_quick_code(val)
+        self._select_tab("Быстрый DataMatrix")
+        self._quick_generate()
+
+    def _show_scanner_check(self) -> None:
+        """Окно «Проверка сканера»: счётчик и поле, куда направить сканер."""
+        win = tk.Toplevel(self.root)
+        win.title("Проверка сканера")
+        win.resizable(False, False)
+        win.transient(self.root)
+        win.grab_set()
+
+        result_var = tk.StringVar(value="Наведите сканер на код…")
+        counter_var = tk.StringVar(value="Считано кодов: 0")
+        done = {"n": 0}
+
+        def _on_local_enter(event=None) -> None:
+            focus = self.root.focus_get()
+            if focus is not event.widget:
+                return None
+            try:
+                code = str(event.widget.get("1.0", "end-1c")).strip() \
+                    if hasattr(event.widget, "get_view") else str(event.widget.get()).strip()
+            except Exception:
+                return None
+            if code and self._looks_like_code(code):
+                done["n"] += 1
+                counter_var.set(f"Считано кодов: {done['n']}")
+                result_var.set(f"Принято: {self._short_code(code)}")
+                entry.delete(0, "end")
+            return "break"
+
+        ttk.Label(win, text="Наведите сканер на штрихкод — код появится ниже.",
+                  wraplength=360, justify="left").pack(padx=16, pady=(12, 4))
+        entry = ttk.Entry(win, width=44)
+        entry.pack(padx=16, pady=4)
+        entry.bind("<Return>", _on_local_enter)
+        ttk.Label(win, textvariable=result_var, wraplength=360, justify="left"
+                  ).pack(padx=16, pady=4)
+        ttk.Label(win, textvariable=counter_var, foreground="#1a7f37"
+                  ).pack(padx=16, pady=(0, 8))
+
+        def _use_result() -> None:
+            code = entry.get().strip()
+            if code:
+                self._on_scanner_code(code)
+                result_var.set("Код перенесён во вкладку «Быстрый DataMatrix».")
+
+        btn_row = ttk.Frame(win)
+        btn_row.pack(pady=(0, 12))
+        ttk.Button(btn_row, text="Использовать код",
+                   command=_use_result).pack(side="left", padx=6)
+        ttk.Button(btn_row, text="Закрыть", command=win.destroy).pack(side="left", padx=6)
+
+        entry.focus_set()
+
+    @staticmethod
+    def _short_code(code: str) -> str:
+        """Укорачивает код для показа, если он длинный."""
+        return code if len(code) <= 40 else code[:37] + "…"
 
     @staticmethod
     def _looks_like_code(val: str) -> bool:

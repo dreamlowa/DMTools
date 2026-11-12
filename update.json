@@ -1,5 +1,5 @@
 {
-  "version": "1.8.22",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.22/DMTools.exe",
-  "notes": "Поддержка сканера штрихкодов в клавиатурном режиме: код из любого поля кода + Enter автоматически переносится во вкладку «Быстрый DataMatrix» и запускает проверку."
+  "version": "1.8.23",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.23/DMTools.exe",
+  "notes": "Меню «Сканер» в шапке: переключатель приёма сканера и окно «Проверка сканера» со счётчиком считанных кодов и переносом в «Быстрый DataMatrix»."
 }
