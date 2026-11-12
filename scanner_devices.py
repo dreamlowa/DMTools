@@ -143,51 +143,74 @@ def _run_cim(query: str, props: list[str]) -> list[dict]:
 
 
 def list_com_ports() -> list[PortInfo]:
-    """Возвращает список COM-портов, зарегистрированных в системе.
+    """Возвращает список COM-портов (сканеры в Serial-режиме).
 
-    Берёт имена портов из реестра, затем для каждого ищет читаемое имя
-    устройства и VID/PID в Win32_PnPEntity.
+    Источники (оба):
+      1) реестр HKLM\\HARDWARE\\DEVICEMAP\\SERIALCOMM;
+      2) PnP-устройства, чьё имя или DeviceID содержат "COM<цифры>"
+         — например «Устройство с последовательным интерфейсом USB (COM3)».
+    Второй источник важен: иногда COM-порт есть и драйвер работает, но в
+    реестре DEVICEMAP он не прописан, и чтения только из реестра не хватает.
     """
     ports: list[PortInfo] = []
+    seen: set[str] = set()
+
+    # 1) из реестра
     try:
         key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
                              r"HARDWARE\DEVICEMAP\SERIALCOMM")
+        try:
+            for i in range(winreg.QueryInfoKey(key)[1]):
+                try:
+                    _n, value, _t = winreg.EnumValue(key, i)
+                except OSError:
+                    continue
+                if value and str(value).startswith("COM"):
+                    ports.append(PortInfo(device=str(value)))
+                    seen.add(str(value))
+        finally:
+            winreg.CloseKey(key)
     except OSError:
-        return ports
-    try:
-        count = winreg.QueryInfoKey(key)[1]
-        for i in range(count):
-            try:
-                _name, value, _type = winreg.EnumValue(key, i)
-            except OSError:
-                continue
-            if value and str(value).startswith("COM"):
-                ports.append(PortInfo(device=str(value)))
-    finally:
-        winreg.CloseKey(key)
+        pass
+
+    # 2) из PnP — устройства, чьё имя/DeviceID содержит "COM<цифры>"
+    pnp = _run_cim(
+        "($_.PNPClass -in @('Ports','Modem','USB') -or $_.DeviceID -like 'USB\\\\*')",
+        ["Name", "DeviceID", "PNPClass"])
+    com_re = re.compile(r"\bCOM(\d+)\b", re.IGNORECASE)
+    for item in pnp:
+        devid = item.get("DeviceID") or ""
+        name = item.get("Name") or ""
+        joined = f"{name} {devid}"
+        m = com_re.search(joined)
+        if not m:
+            continue
+        device = "COM" + m.group(1)
+        if device in seen:
+            continue
+        seen.add(device)
+        p = PortInfo(device=device, name=name, description=name)
+        p.vid, p.pid = _parse_vidpid(devid)
+        ports.append(p)
 
     if not ports:
         return ports
     ports.sort(key=lambda p: _com_sort_key(p.device))
 
-    # имена устройств и VID/PID из PnP
-    pnp = _run_cim(
-        "($_.PNPClass -in @('Ports','Modem','USB') -or $_.DeviceID -like 'USB\\\\*')",
-        ["Name", "DeviceID", "PNPClass"])
+    # дорисовываем недостающие имена/VID из PnP для портов из реестра
     for p in ports:
+        if p.name and p.vid:
+            continue
         for item in pnp:
             devid = item.get("DeviceID") or ""
             name = item.get("Name") or ""
-            # ищем запись, чей DeviceID упоминает наш порт либо имя содержит "COMx"
             if f"({p.device.upper()})" in name.upper() or f"\\{p.device.upper()}" in devid.upper():
                 vid, pid = _parse_vidpid(devid)
-                # COM-порт показываем, если он похож на сканер ИЛИ о нём
-                # ничего не известно (нет имени/VID) — тогда это просто порт
                 if not _is_scanner_like(name, vid) and vid:
                     break
-                p.name = name
+                p.name = name or p.name
                 p.vid, p.pid = vid, pid
-                p.description = name
+                p.description = name or p.description
                 break
         if not p.name:
             p.name = p.device
