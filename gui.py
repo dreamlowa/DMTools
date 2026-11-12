@@ -313,6 +313,8 @@ class ConverterGui:
         scanner_menu.add_separator()
         scanner_menu.add_command(label="Журнал диагностики…",
                                  command=self._show_scanner_diag)
+        scanner_menu.add_command(label="Служебные штрихкоды MERTECH…",
+                                 command=self._show_scanner_barcodes)
         menubar.add_cascade(label="Сканер", menu=scanner_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -2647,6 +2649,79 @@ class ConverterGui:
 
         win.protocol("WM_DELETE_WINDOW", _on_close)
         entry.focus_set()
+
+    def _render_code128_png(self, text: str, scale: int = 8) -> str | None:
+        """Генерирует обычный Code128-штрихкод (не GS1) через zint и
+        возвращает путь к PNG. text — строка, которую кодируем (например
+        служебный код MERTECH '090400'). Возвращает None при ошибке."""
+        from converter import find_zint_exe
+        import subprocess, tempfile
+        from pathlib import Path
+        zint = find_zint_exe()
+        if zint is None:
+            return None
+        td = tempfile.mkdtemp(prefix="dmtools_bc_")
+        png = str(Path(td) / "code.png")
+        try:
+            proc = subprocess.run(
+                [str(zint), "-b", "CODE128", "--scale", str(scale),
+                 "-d", text, "-o", png],
+                capture_output=True, text=True, timeout=20,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if proc.returncode != 0 or not Path(png).is_file():
+                return None
+            return png
+        except Exception:
+            return None
+
+    def _show_scanner_barcodes(self) -> None:
+        """Окно со служебными штрихкодами MERTECH.
+
+        Для сканеров MERTECH, подключённых как COM-порт, бывает нужно
+        перевести сканер в режим USB-COM служебным штрихкодом. Здесь эти
+        штрихкоды показаны на экране — сканер просто наводится на нужный
+        код, как на бумажный.
+        """
+        from PIL import Image, ImageTk
+        win = tk.Toplevel(self.root)
+        win.title("Служебные штрихкоды MERTECH")
+        win.resizable(False, False)
+        win.transient(self.root)
+
+        codes = [
+            ("090400", "Перевести сканер в режим USB-COM",
+             "Отсканируйте этот штрихкод сканером. После этого сканер "
+             "будет передавать данные в COM-порт."),
+            ("080404", "Очистить префиксы и суффиксы",
+             "Отсканируйте также — чтобы сканер не добавлял к коду "
+             "лишних символов."),
+        ]
+
+        tk.Label(win, text="Наведите сканер на нужный штрихкод, как на "
+                           "бумажку.",
+                 wraplength=480, justify="left", font=("Arial", 10)
+                 ).pack(padx=16, pady=(12, 2))
+
+        _refs = []
+
+        for value, title, note in codes:
+            png = self._render_code128_png(value)
+            row = ttk.Frame(win)
+            row.pack(fill="x", padx=16, pady=4)
+            ttk.Label(row, text=title, font=("Arial", 10, "bold")
+                      ).pack(anchor="w")
+            if png:
+                img = Image.open(png).convert("RGBA")
+                photo = ImageTk.PhotoImage(img)
+                _refs.append(photo)  # держим ссылку
+                tk.Label(row, image=photo, bg="white"
+                         ).pack(anchor="w", pady=2)
+            ttk.Label(row, text=note + f"\nКод: {value}",
+                      wraplength=480, justify="left", fg="#555"
+                      ).pack(anchor="w")
+
+        ttk.Button(win, text="Закрыть", command=win.destroy
+                   ).pack(pady=(8, 12))
 
     def _show_scanner_diag(self) -> None:
         """Окно «Журнал диагностики сканера».
