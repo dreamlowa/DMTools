@@ -440,14 +440,31 @@ class ConverterGui:
                     except Exception:
                         pass
 
+            def do_paste():
+                try:
+                    entry.clipboard_get()
+                except Exception:
+                    return
+                try:
+                    entry.delete(0, "end")
+                    entry.insert(0, entry.clipboard_get())
+                except Exception:
+                    try:
+                        entry.insert(0, entry.clipboard_get())
+                    except Exception:
+                        pass
+
             def do_select_all():
                 entry.select_range(0, "end")
                 entry.icursor("end")
 
             menu.add_command(label="Копировать", command=do_copy)
+            menu.add_command(label="Вставить", command=do_paste)
             menu.add_command(label="Выбрать всё", command=do_select_all)
             entry.bind("<Button-3>", lambda e, m=menu: m.tk_popup(e.x_root, e.y_root))
             entry.bind("<Control-c>", lambda e: do_copy())
+            entry.bind("<Control-v>", lambda e: do_paste())
+            entry.bind("<<Paste>>", lambda e: do_paste())
 
         def walk(widget):
             for child in widget.winfo_children():

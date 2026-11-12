@@ -1,5 +1,5 @@
 {
-  "version": "1.8.28",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.28/DMTools.exe",
-  "notes": "«CSV → DataMatrix»: добавлено поле «Код маркировки» — код можно ввести вручную и сгенерировать по нему DataMatrix одним нажатием (переходит на вкладку «Быстрый DataMatrix» и строит код 25×25 мм)."
+  "version": "1.8.29",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.29/DMTools.exe",
+  "notes": "Поля ввода: добавлена надёжная вставка — пункт «Вставить» в контекстном меню и поддержка Ctrl+V во всех полях, включая поле «Код маркировки» во вкладке «CSV → DataMatrix»."
 }
