@@ -187,6 +187,8 @@ class ConverterGui:
         self.escape_mode_var = tk.StringVar(value="gs")
         self.dark_var = tk.BooleanVar(value=False)
         self.scanner_enabled = tk.BooleanVar(value=True)
+        self.scanner_mode_var = tk.StringVar(value="keyboard")
+        self.scanner_port_var = tk.StringVar(value="")
         self.status_var = tk.StringVar(value="Выберите PDF-файл или папку")
 
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
@@ -306,7 +308,8 @@ class ConverterGui:
         scanner_menu.add_checkbutton(
             label="Приём сканера", variable=self.scanner_enabled,
             command=self._apply_scanner_enabled)
-        scanner_menu.add_command(label="Проверить сканер…", command=self._show_scanner_check)
+        scanner_menu.add_command(label="Настройки и проверка…",
+                                 command=self._show_scanner_check)
         menubar.add_cascade(label="Сканер", menu=scanner_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -2365,16 +2368,58 @@ class ConverterGui:
         return _on_enter
 
     def _apply_scanner_enabled(self) -> None:
-        """Включает/выключает глобальный приём сканера по галочке в меню."""
+        """Включает/выключает приём сканера по галочке в меню.
+
+        В зависимости от выбранного режима:
+          * keyboard — глобальный перехват Enter (сканер как клавиатура);
+          * com — фоновый наблюдатель на COM-порту (сканер как Serial).
+        """
         if not hasattr(self, "root"):
             return
-        if self.scanner_enabled.get():
-            self.root.bind("<Return>", self._scanner_on_enter, add="+")
-        else:
+        if not self.scanner_enabled.get():
+            self._stop_com_listener()
             try:
                 self.root.unbind("<Return>", self._scanner_on_enter)
             except Exception:
                 pass
+            return
+        mode = getattr(self, "scanner_mode_var", None)
+        if mode is not None and mode.get() == "com":
+            self.root.unbind("<Return>", self._scanner_on_enter)
+            self._start_com_listener()
+        else:
+            self._stop_com_listener()
+            self.root.bind("<Return>", self._scanner_on_enter, add="+")
+
+    def _start_com_listener(self) -> None:
+        """Запускает фоновый наблюдатель на выбранном COM-порту."""
+        import scanner as scanner_mod
+        self._stop_com_listener()
+        port = getattr(self, "scanner_port_var", None)
+        if port is None or not port.get():
+            return
+        try:
+            sc = scanner_mod.SerialScanner(port.get(), on_code=self._on_scanner_code,
+                                           on_error=lambda m: self._scanner_com_error(m))
+            err = sc.open()
+            if err:
+                self._scanner_com_error(err)
+                return
+            self._scanner_com = sc
+        except Exception:
+            self._scanner_com = None
+
+    def _stop_com_listener(self) -> None:
+        sc = getattr(self, "_scanner_com", None)
+        if sc is not None:
+            try:
+                sc.close()
+            except Exception:
+                pass
+        self._scanner_com = None
+
+    def _scanner_com_error(self, message: str) -> None:
+        self.root.after(0, lambda: self.status_var.set(message))
 
     def _on_scanner_code(self, val: str) -> None:
         """Сканированный код: инкремент счётчика и перенос в Быстрый DataMatrix."""
@@ -2384,55 +2429,218 @@ class ConverterGui:
         self._quick_generate()
 
     def _show_scanner_check(self) -> None:
-        """Окно «Проверка сканера»: счётчик и поле, куда направить сканер."""
+        """Окно «Сканер: настройки и проверка».
+
+        Показывает, какое оборудование Windows видит как сканер (COM-порты
+        и USB/HID-устройства ввода), позволяет выбрать режим приёма
+        (Клавиатура или конкретный COM-порт) и проверить его, а также
+        содержит поле со счётчиком считанных кодов.
+        """
+        import scanner_devices
+        import scanner as scanner_mod
+
         win = tk.Toplevel(self.root)
-        win.title("Проверка сканера")
+        win.title("Сканер: настройки и проверка")
         win.resizable(False, False)
         win.transient(self.root)
-        win.grab_set()
 
         result_var = tk.StringVar(value="Наведите сканер на код…")
         counter_var = tk.StringVar(value="Считано кодов: 0")
         done = {"n": 0}
+        status_var = tk.StringVar(value="")
+        mode_var = tk.StringVar(value="keyboard")
+        port_var = tk.StringVar(value="")
+        com_evt = {"scanner": None}
+
+        # ---------- обнаружение оборудования ----------
+        hid_items = scanner_devices.list_hid_keyboards()
+        com_items = scanner_devices.list_com_ports()
+        if not hid_items and not com_items:
+            status_var.set(
+                "Сканер не обнаружен. Подключите его по USB — как клавиатуру "
+                "или как COM-устройство — и нажмите «Обновить».")
+
+        tk.Label(win, text="Обнаруженное оборудование:",
+                 font=("Arial", 10, "bold")).pack(anchor="w", padx=16, pady=(12, 2))
+        dev_text = tk.Text(win, width=58, height=7, state="disabled",
+                           font=("Consolas", 9))
+        dev_text.pack(padx=16)
+
+        def _fmt_devs() -> str:
+            lines = []
+            if com_items:
+                lines.append("Порты COM (сканер как Serial):")
+                for p in com_items:
+                    lines.append(f"  {p.device} — {p.name}  "
+                                 f"(VID:{p.vid} PID:{p.pid})".rstrip())
+            else:
+                lines.append("Порты COM: не обнаружены")
+            hid = hid_items
+            if hid:
+                lines.append("Устройства USB/HID (сканер как клавиатура):")
+                for h in hid:
+                    mark = "  ⚠ возможно сканер" if scanner_devices.is_likely_scanner_vid(h.vid) else ""
+                    lines.append(f"  {h.name}  (VID:{h.vid} PID:{h.pid}){mark}")
+            else:
+                lines.append("Устройства USB/HID: не обнаружены")
+            return "\n".join(lines)
+
+        def _refresh_devs() -> None:
+            nonlocal hid_items, com_items
+            hid_items = scanner_devices.list_hid_keyboards()
+            com_items = scanner_devices.list_com_ports()
+            dev_text.configure(state="normal")
+            dev_text.delete("1.0", "end")
+            dev_text.insert("1.0", _fmt_devs())
+            dev_text.configure(state="disabled")
+            _rebuild_port_choices()
+            status_var.set("Список оборудования обновлён.")
+
+        dev_text.insert("1.0", _fmt_devs())
+        dev_text.configure(state="disabled")
+
+        body = ttk.Frame(win)
+        body.pack(fill="x", padx=16, pady=(8, 4))
+
+        ttk.Label(body, text="Режим приёма:").grid(row=0, column=0,
+                                                    sticky="w", padx=(0, 8))
+        row1 = ttk.Frame(body)
+        row1.grid(row=0, column=1, sticky="w")
+        ttk.Radiobutton(row1, text="Клавиатура (USB HID)",
+                        variable=mode_var, value="keyboard"
+                        ).pack(side="left")
+        ttk.Radiobutton(row1, text="COM-порт",
+                        variable=mode_var, value="com"
+                        ).pack(side="left", padx=(12, 0))
+
+        ttk.Label(body, text="Порт:").grid(row=1, column=0, sticky="w",
+                                           padx=(0, 8), pady=(6, 0))
+        port_box = ttk.Combobox(body, textvariable=port_var, width=40,
+                                state="readonly")
+        port_box.grid(row=1, column=1, sticky="w", pady=(6, 0))
+
+        def _rebuild_port_choices() -> None:
+            vals = [c.device for c in com_items]
+            port_box["values"] = vals
+            if vals and not port_var.get():
+                port_var.set(vals[0])
+
+        _rebuild_port_choices()
+
+        ttk.Label(body, textvariable=status_var, foreground="#a33",
+                  wraplength=420, justify="left"
+                  ).grid(row=2, column=0, columnspan=2, sticky="w",
+                         pady=(8, 0))
+
+        # ---------- тест ----------
+        sep = ttk.Separator(win, orient="horizontal")
+        sep.pack(fill="x", padx=16, pady=(10, 6))
+        ttk.Label(win, text="Проверка приёма:",
+                  font=("Arial", 10, "bold")).pack(anchor="w", padx=16,
+                                                   pady=(0, 4))
+
+        ttk.Label(win, text="Клавиатурный режим: наведите сканер — код "
+                            "появится ниже. COM-режим: откройте наблюдатель "
+                            "и наведите сканер.",
+                  wraplength=430, justify="left").pack(anchor="w", padx=16)
+
+        entry = ttk.Entry(win, width=50)
+        entry.pack(padx=16, pady=(6, 0))
+
+        def _apply_code(code: str) -> bool:
+            if not code or not self._looks_like_code(code):
+                return False
+            done["n"] += 1
+            counter_var.set(f"Считано кодов: {done['n']}")
+            result_var.set(f"Принято: {self._short_code(code)}")
+            entry.delete(0, "end")
+            return True
 
         def _on_local_enter(event=None) -> None:
-            focus = self.root.focus_get()
-            if focus is not event.widget:
+            widget = self.root.focus_get()
+            if widget is not entry:
                 return None
-            try:
-                code = str(event.widget.get("1.0", "end-1c")).strip() \
-                    if hasattr(event.widget, "get_view") else str(event.widget.get()).strip()
-            except Exception:
-                return None
-            if code and self._looks_like_code(code):
-                done["n"] += 1
-                counter_var.set(f"Считано кодов: {done['n']}")
-                result_var.set(f"Принято: {self._short_code(code)}")
-                entry.delete(0, "end")
-            return "break"
+            code = entry.get()
+            if _apply_code(code):
+                return "break"
+            return None
 
-        ttk.Label(win, text="Наведите сканер на штрихкод — код появится ниже.",
-                  wraplength=360, justify="left").pack(padx=16, pady=(12, 4))
-        entry = ttk.Entry(win, width=44)
-        entry.pack(padx=16, pady=4)
         entry.bind("<Return>", _on_local_enter)
-        ttk.Label(win, textvariable=result_var, wraplength=360, justify="left"
-                  ).pack(padx=16, pady=4)
-        ttk.Label(win, textvariable=counter_var, foreground="#1a7f37"
-                  ).pack(padx=16, pady=(0, 8))
 
-        def _use_result() -> None:
-            code = entry.get().strip()
-            if code:
-                self._on_scanner_code(code)
-                result_var.set("Код перенесён во вкладку «Быстрый DataMatrix».")
+        # наблюдатель COM для теста
+        def _start_watch() -> None:
+            sc = com_evt.get("scanner")
+            if sc is not None:
+                try:
+                    sc.close()
+                except Exception:
+                    pass
+                com_evt["scanner"] = None
+            if mode_var.get() != "com" or not port_var.get():
+                status_var.set("Для COM-проверки выберите режим «COM-порт» и порт.")
+                return
+            status_var.set(f"Открываю {port_var.get()}…")
+
+            def _on_code(code: str) -> None:
+                # вызов из фонового потока — планируем в GUI
+                self.root.after(0, lambda: _apply_code(code))
+
+            def _on_err(msg: str) -> None:
+                self.root.after(0, lambda: status_var.set(msg))
+
+            sc = scanner_mod.SerialScanner(port_var.get(), on_code=_on_code,
+                                           on_error=_on_err)
+            err = sc.open()
+            if err:
+                status_var.set(err)
+                sc.close()
+                return
+            com_evt["scanner"] = sc
+            status_var.set(f"Наблюдатель {port_var.get()} открыт. Наведите сканер.")
+
+        def _stop_watch() -> None:
+            sc = com_evt.get("scanner")
+            if sc is not None:
+                try:
+                    sc.close()
+                except Exception:
+                    pass
+                com_evt["scanner"] = None
+                status_var.set("Наблюдатель остановлен.")
+
+        # ---------- возврат значений в основное окно ----------
+        def _apply_settings() -> None:
+            self.scanner_mode_var = mode_var.get()
+            self.scanner_port_var = port_var.get()
+            self._apply_scanner_enabled()
+            mode_label = "COM-порт" if mode_var.get() == "com" else "Клавиатура"
+            port_txt = f" — порт {port_var.get()}" if mode_var.get() == "com" else ""
+            messagebox.showinfo("Сканер",
+                                f"Режим приёма: {mode_label}{port_txt}.")
+
+        ttk.Label(win, textvariable=result_var, wraplength=430, justify="left"
+                  ).pack(anchor="w", padx=16, pady=(4, 0))
+        ttk.Label(win, textvariable=counter_var, foreground="#1a7f37"
+                  ).pack(anchor="w", padx=16, pady=(2, 6))
 
         btn_row = ttk.Frame(win)
-        btn_row.pack(pady=(0, 12))
-        ttk.Button(btn_row, text="Использовать код",
-                   command=_use_result).pack(side="left", padx=6)
-        ttk.Button(btn_row, text="Закрыть", command=win.destroy).pack(side="left", padx=6)
+        btn_row.pack(pady=(4, 12))
+        ttk.Button(btn_row, text="Обновить", command=_refresh_devs
+                   ).pack(side="left", padx=4)
+        ttk.Button(btn_row, text="Слушать COM",
+                   command=_start_watch).pack(side="left", padx=4)
+        ttk.Button(btn_row, text="Остановить",
+                   command=_stop_watch).pack(side="left", padx=4)
+        ttk.Button(btn_row, text="Применить",
+                   command=_apply_settings).pack(side="left", padx=4)
+        ttk.Button(btn_row, text="Закрыть",
+                   command=win.destroy).pack(side="left", padx=4)
 
+        def _on_close() -> None:
+            _stop_watch()
+            win.destroy()
+
+        win.protocol("WM_DELETE_WINDOW", _on_close)
         entry.focus_set()
 
     @staticmethod
@@ -4190,6 +4398,7 @@ class ConverterGui:
         ):
             return
         self._save_config()
+        self._stop_com_listener()
         self.cancel_event.set()
         self.root.destroy()
 
