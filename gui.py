@@ -2271,6 +2271,31 @@ class ConverterGui:
         code = code.replace("\u29f8", "\x1d").replace("<>", "\x1d").replace("<GS>", "\x1d")
         return code
 
+    def _is_short_code(self, code: str) -> bool:
+        """Проверяет, является ли код укороченным кодом идентификации:
+        ровно 01+GTIN(14)+21+серия без криптохвоста 91/92 и без разделителей GS
+        (обычный формат кодов из этикеток CSV → DataMatrix)."""
+        text = code.strip()
+        if not text.startswith("01"):
+            return False
+        if len(text) < 16 + 2 + 1:
+            return False
+        gtin = text[2:16]
+        if not gtin.isdigit() or len(gtin) != 14:
+            return False
+        rest = text[16:]
+        if not rest.startswith("21"):
+            return False
+        serial = rest[2:]
+        if not serial:
+            return False
+        # если после серии есть GS или хвост 91/92 — это не укороченный (короткий)
+        if "\x1d" in serial:
+            return False
+        if serial.startswith("91") or serial.startswith("92"):
+            return False
+        return True
+
     def _quick_code_get(self) -> str:
         """Читает введённый код из многострочного поля (берёт первую строку)."""
         if not hasattr(self, "quick_code_text"):
@@ -2302,8 +2327,13 @@ class ConverterGui:
             self.quick_status_var.set("Пустой код. Вставьте код маркировки.")
             return
         problems = validate_code_structure(code)
-        if problems:
+        # Укороченный код (01+GTIN+21+серия без криптохвоста 91/92) — валиден:
+        # это обычный формат кодов из CSV-этикеток, разделители GS тут не нужны.
+        short = self._is_short_code(code)
+        if problems and not short:
             self.quick_status_var.set("Код не прошёл проверку: " + "; ".join(problems))
+        elif short:
+            self.quick_status_var.set("Код корректен (укороченный). Генерирую DataMatrix…")
         else:
             self.quick_status_var.set("Код корректен. Генерирую DataMatrix…")
         self.root.update_idletasks()

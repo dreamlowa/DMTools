@@ -2,7 +2,7 @@
 ; Компиляция: ISCC.exe installer.iss
 
 #define AppName "DMTools"
-#define AppVersion "1.8.31"
+#define AppVersion "1.8.32"
 #define AppExe "DMTools.exe"
 
 [Setup]
