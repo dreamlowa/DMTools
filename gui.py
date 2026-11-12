@@ -1169,6 +1169,26 @@ class ConverterGui:
         )
         self.dm_size_name_spin.pack(side="left", padx=(8, 0))
 
+        # --- Строка: ручной ввод кода маркировки ---
+        ttk.Label(data_frame, text="Код маркировки:").grid(
+            row=7, column=0, sticky="e", padx=(0, 8), pady=(0, 8)
+        )
+        manual_row = ttk.Frame(data_frame)
+        manual_row.grid(row=7, column=1, columnspan=3, sticky="ew", pady=(0, 8))
+        manual_row.columnconfigure(0, weight=1)
+        self.dm_manual_code_var = tk.StringVar()
+        self.dm_manual_code_entry = ttk.Entry(
+            manual_row, textvariable=self.dm_manual_code_var
+        )
+        self.dm_manual_code_entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        self.dm_manual_code_entry.bind(
+            "<Return>", lambda _e: self._manual_code_generate()
+        )
+        ttk.Button(
+            manual_row, text="Сгенерировать DataMatrix",
+            command=self._manual_code_generate, style="Accent.TButton"
+        ).grid(row=0, column=1)
+
         # ===== Блок 2: Вывод =====
         output_frame = ttk.LabelFrame(left, text="Вывод", padding=(10, 6))
         output_frame.grid(row=1, column=0, sticky="ew")
@@ -1814,9 +1834,27 @@ class ConverterGui:
         if line:
             self._show_details_for_line(line)
 
+    def _manual_code_generate(self) -> None:
+        """Генерирует DataMatrix по вручную введённому коду маркировки.
+
+        Переносит код из поля «Код маркировки» во вкладку «Быстрый DataMatrix»
+        и запускает генерацию там (механизм тот же, что у кнопки «Проверить»
+        в «Быстром DataMatrix»).
+        """
+        code = getattr(self, "dm_manual_code_var", None)
+        if code is None:
+            return
+        raw = code.get().strip()
+        if not raw:
+            messagebox.showwarning(
+                "Ручной ввод", "Введите код маркировки в поле «Код маркировки».")
+            return
+        self._set_quick_code(raw)
+        self._select_tab("Быстрый DataMatrix")
+        self._quick_generate()
+
     def _collect_dm_csv_text(self) -> str:
         """Возвращает объединённый текст кодов из всех выбранных CSV-файлов."""
-        import io
         files = getattr(self, "_dm_csv_files", None) or []
         if not files:
             single = self.dm_csv_var.get().strip()

@@ -1,5 +1,5 @@
 {
-  "version": "1.8.27",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.27/DMTools.exe",
-  "notes": "Сканер: в меню добавлен экран «Служебные штрихкоды MERTECH» — штрихкоды для перевода сканера в режим USB-COM (090400) и очистки суффиксов (080404) показываются прямо на экране, их можно отсканировать сканером."
+  "version": "1.8.28",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.28/DMTools.exe",
+  "notes": "«CSV → DataMatrix»: добавлено поле «Код маркировки» — код можно ввести вручную и сгенерировать по нему DataMatrix одним нажатием (переходит на вкладку «Быстрый DataMatrix» и строит код 25×25 мм)."
 }
