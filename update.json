@@ -1,5 +1,5 @@
 {
-  "version": "1.8.30",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.30/DMTools.exe",
-  "notes": "Смена издателя: разработчиком указано ООО «Дельфин центр» (в установщике, свойствах EXE и файле «Читать»). Зона тишины вокруг DataMatrix в этикетках."
+  "version": "1.8.31",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.31/DMTools.exe",
+  "notes": "Зона тишины (белая рамка в 1 модуль) вокруг DataMatrix добавлена во все пути: PDF-этикетки, экспорт PNG, предпросмотр и «Быстрый DataMatrix»."
 }

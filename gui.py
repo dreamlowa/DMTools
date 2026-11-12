@@ -2328,6 +2328,8 @@ class ConverterGui:
                 )
                 if proc.returncode != 0 or not png_path.exists():
                     raise RuntimeError("Ошибка генерации DataMatrix")
+                from converter import add_dm_quiet_zone
+                add_dm_quiet_zone(png_path, 10)
                 from PIL import Image, ImageTk
                 img = Image.open(str(png_path)).convert("RGBA")
                 self._show_quick_image(img)
@@ -3232,6 +3234,8 @@ class ConverterGui:
                     )
                     if proc.returncode != 0 or not png_path.exists():
                         continue
+                    from converter import add_dm_quiet_zone
+                    add_dm_quiet_zone(png_path, scale)
 
                     dm = Image.open(str(png_path)).convert("RGBA")
                     label = Image.new("RGBA", (disp_w, disp_h), "white")
@@ -3471,6 +3475,8 @@ class ConverterGui:
                     )
                     if proc.returncode != 0 or not png_path.exists():
                         return
+                    from converter import add_dm_quiet_zone
+                    add_dm_quiet_zone(png_path, 8)
                     img = Image.open(str(png_path)).convert("RGB")
                     img = img.resize((size, size), Image.LANCZOS)
                     # отдаём PIL-изображение в главный поток для отрисовки
