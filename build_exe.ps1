@@ -58,6 +58,9 @@ if (-not (Test-Path -LiteralPath $Python)) {
     --add-binary "zint.exe;." `
     --add-binary "dist\updater_helper.exe;." `
     --add-data "centrdelfin.ico;." `
+    --hidden-import "scanner" `
+    --hidden-import "scanner_devices" `
+    --hidden-import "scanner_diag" `
     --version-file "version_info.txt" `
     "main.py"
 

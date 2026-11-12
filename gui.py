@@ -310,6 +310,9 @@ class ConverterGui:
             command=self._apply_scanner_enabled)
         scanner_menu.add_command(label="Настройки и проверка…",
                                  command=self._show_scanner_check)
+        scanner_menu.add_separator()
+        scanner_menu.add_command(label="Журнал диагностики…",
+                                 command=self._show_scanner_diag)
         menubar.add_cascade(label="Сканер", menu=scanner_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -2644,6 +2647,120 @@ class ConverterGui:
 
         win.protocol("WM_DELETE_WINDOW", _on_close)
         entry.focus_set()
+
+    def _show_scanner_diag(self) -> None:
+        """Окно «Журнал диагностики сканера».
+
+        Собирает автоматический отчёт о том, что Windows видит как
+        устройства ввода и последовательные порты, а также логирует
+        нажатия клавиш и байты с COM-порта в реальном времени.
+        Журнал можно скопировать и переслать для разбора — в том числе
+        «с другого компьютера», где подключён сканер.
+        """
+        import scanner_diag
+        import scanner as scanner_mod
+
+        win = tk.Toplevel(self.root)
+        win.title("Журнал диагностики сканера")
+        win.geometry("640x520")
+        win.transient(self.root)
+
+        log_text = scrolledtext.ScrolledText(
+            win, wrap="none", font=("Consolas", 9), state="disabled")
+        log_text.pack(fill="both", expand=True, padx=8, pady=(8, 4))
+
+        def _append(line: str) -> None:
+            log_text.configure(state="normal")
+            log_text.insert("end", line + "\n")
+            log_text.see("end")
+            log_text.configure(state="disabled")
+
+        # заголовок и начало журнала
+        import time as _time
+        _append("Содержание:")
+        _append("  1) отчёт об оборудовании (COm/HID/USB с VID:PID);\n"
+                "  2) живые события: нажатия клавиш и Enter от сканера;\n"
+                "  3) если открыт COM-порт — принятые байты.")
+        _append("")
+
+        # строка-подсказка что делать
+        hint = "Наведите сканер на код теперь — и нажмите Enter. "
+        hint += "Байты/нажатия появятся в журнале."
+        _append(">>> ПРОВЕРКА: " + hint)
+
+        # --- живой захват нажатий (клавиатурный сканер) ---
+        def _on_key(event=None) -> None:
+            try:
+                wname = event.widget.winfo_class() if event.widget else "?"
+            except Exception:
+                wname = "?"
+            kc = getattr(event, "keysym", "?")
+            # если это Enter/Return — особое сообщение
+            if kc in ("Return", "KP_Enter"):
+                _append(f"[клавиша] Enter нажата в поле {wname}")
+            else:
+                _append(f"[клавиша] {kc}")
+        win.bind("<Key>", _on_key, add="+")
+
+        # --- COM-наблюдатель (если выбран COM) ---
+        diag_scanner = {"s": None}
+        port = getattr(self, "scanner_port_var", None)
+        if port and port.get():
+            def _com_code(code: str) -> None:
+                self.root.after(0, lambda: _append(f"[COM] код: {code}"))
+            def _com_err(msg: str) -> None:
+                self.root.after(0, lambda: _append(f"[COM] ошибка: {msg}"))
+            try:
+                sc = scanner_mod.SerialScanner(port.get(),
+                                               on_code=_com_code,
+                                               on_error=_com_err)
+                err = sc.open()
+                if err:
+                    _append(f"[COM] {err}")
+                else:
+                    _append(f"[COM] слушаю {port.get()}…")
+                    diag_scanner["s"] = sc
+            except Exception as exc:
+                _append(f"[COM] не удалось открыть: {exc}")
+
+        # --- кнопка сбора отчёта об оборудовании ---
+        def _collect_report() -> None:
+            _append("")
+            _append(">>> Отчёт об оборудовании…")
+            report = scanner_diag.collect_diagnostic()
+            for line in report.splitlines():
+                _append(line)
+
+        _append("")
+        _append(">>> Нажмите «Собрать отчёт об оборудовании» ниже, а также")
+        _append("    наведите сканер на такой код и посмотрите, что появится.")
+        _append("")
+
+        buttons = ttk.Frame(win)
+        buttons.pack(fill="x", padx=8, pady=(0, 8))
+
+        def _copy_all() -> None:
+            txt = log_text.get("1.0", "end-1c")
+            win.clipboard_clear()
+            win.clipboard_append(txt)
+            _append("[+] Журнал скопирован в буфер обмена")
+
+        ttk.Button(buttons, text="Собрать отчёт об оборудовании",
+                   command=_collect_report).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Копировать журнал",
+                   command=_copy_all).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Закрыть", command=win.destroy
+                   ).pack(side="left", padx=3)
+
+        def _on_close() -> None:
+            sc = diag_scanner.get("s")
+            if sc is not None:
+                try:
+                    sc.close()
+                except Exception:
+                    pass
+            win.destroy()
+        win.protocol("WM_DELETE_WINDOW", _on_close)
 
     @staticmethod
     def _short_code(code: str) -> str:
