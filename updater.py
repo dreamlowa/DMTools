@@ -100,19 +100,31 @@ def app_exe_path() -> Path:
 def helper_exe_path() -> Path | None:
     """Путь к вспомогательному обновлятору.
 
-    Ищем helper СНАЧАЛА рядом с главным EXE (в папке установки), а не в
-    _MEIPASS: если запустить helper из временной папки _MEI приложения,
-    он держит файл _MEI открытым и блокирует её удаление при выходе
-    (ошибка PyInstaller "Failed to remove temporary directory").
+    Ищем helper СНАЧАЛА рядом с главным EXE (в папке установки), затем в
+    _MEIPASS (внутри EXE). Если рядом нет, а внутри `_MEIPASS` есть — копируем
+    helper во временную папку (не в _MEI, иначе он блокирует её удаление при
+    выходе — ошибка PyInstaller "Failed to remove temporary directory") и
+    возвращаем этот путь. Так обновление работает даже если установщик не
+    положил helper рядом с программой.
     """
-    base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
-    cands = [
-        Path(sys.executable).resolve().parent / UPDATER_HELPER,
-        base / UPDATER_HELPER,
-    ]
-    for c in cands:
-        if c.is_file():
-            return c
+    app_dir = Path(sys.executable).resolve().parent
+    nearby = app_dir / UPDATER_HELPER
+    if nearby.is_file():
+        return nearby
+    # нет рядом — пробуем извлечь из _MEIPASS (встроен в EXE)
+    base = Path(getattr(sys, "_MEIPASS", app_dir))
+    embedded = base / UPDATER_HELPER
+    if embedded.is_file():
+        try:
+            import tempfile
+            tmp_dir = Path(tempfile.gettempdir()) / "dmtools_updater"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            dest = tmp_dir / UPDATER_HELPER
+            import shutil
+            shutil.copy2(str(embedded), str(dest))
+            return dest
+        except Exception:
+            return embedded
     return None
 
 
