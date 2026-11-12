@@ -57,6 +57,7 @@ if (-not (Test-Path -LiteralPath $Python)) {
     --collect-all "zxingcpp" `
     --add-binary "zint.exe;." `
     --add-binary "dist\updater_helper.exe;." `
+    --add-data "centrdelfin.ico;." `
     --version-file "version_info.txt" `
     "main.py"
 

@@ -1,5 +1,5 @@
 {
-  "version": "1.8.20",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.20/DMTools.exe",
+  "version": "1.8.21",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.21/DMTools.exe",
   "notes": "Улучшения дизайна: зелёная кнопка «Сгенерировать PDF», группировка в блоки «Данные этикетки»/«Вывод», подписи ошибок у дат, иконки на кнопках, подсказки-тултипы."
 }
