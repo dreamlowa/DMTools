@@ -978,6 +978,7 @@ def generate_label_pdf(
     size_batch: float | None = None,
     size_code: float | None = None,
     progress_cb=None,
+    cancel_event=None,
 ) -> tuple[int, str, Path]:
     """Генерирует PDF-этикетки с DataMatrix настраиваемого размера.
 
@@ -1005,6 +1006,8 @@ def generate_label_pdf(
     doc = pymupdf.open()
     try:
         for idx, full_code in enumerate(codes):
+            if cancel_event is not None and cancel_event.is_set():
+                return ok_count, "Отменено пользователем", output_pdf
             try:
                 build_label_page(
                     doc,
@@ -1167,6 +1170,8 @@ def export_labels_png(
     size_expiry: float | None = None,
     size_batch: float | None = None,
     size_code: float | None = None,
+    progress_cb=None,
+    cancel_event=None,
 ) -> tuple[int, str]:
     """Экспортирует каждую этикетку как отдельный PNG-файл.
 
@@ -1208,6 +1213,8 @@ def export_labels_png(
         size_expiry=size_expiry,
         size_batch=size_batch,
         size_code=size_code,
+        progress_cb=progress_cb,
+        cancel_event=cancel_event,
     )
     if err and pages == 0:
         return 0, err
@@ -1221,11 +1228,15 @@ def export_labels_png(
     saved = 0
     try:
         for i in range(len(doc)):
+            if cancel_event is not None and cancel_event.is_set():
+                return saved, "Отменено пользователем"
             pix = doc[i].get_pixmap(dpi=dpi)
             img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
             out_file = output_dir / f"etiketa_{i + 1:04d}.png"
             img.save(str(out_file))
             saved += 1
+            if progress_cb:
+                progress_cb(i + 1, len(doc))
     finally:
         doc.close()
         # удаляем и временный PDF (если сохранялся под исходным именем),

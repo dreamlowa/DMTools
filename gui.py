@@ -556,6 +556,53 @@ class ConverterGui:
                 background=[("active", "#24913c"), ("pressed", "#1f7e34")],
                 foreground=[("active", "#ffffff"), ("pressed", "#ffffff")],
             )
+            # синяя — действие с дополнительной настройкой (инструменты)
+            style.configure(
+                "Info.TButton", background="#2b6cb0", foreground="#ffffff",
+                bordercolor="#2b6cb0", focuscolor=bg, relief="flat",
+                lightcolor="#2b6cb0", darkcolor="#2b6cb0", padding=(10, 4),
+                font=("Segoe UI", 9, "bold"),
+            )
+            style.map(
+                "Info.TButton",
+                background=[("active", "#245a94"), ("pressed", "#1d4b7a")],
+                foreground=[("active", "#ffffff"), ("pressed", "#ffffff")],
+            )
+            # оранжевая — предупреждающее действие
+            style.configure(
+                "Warn.TButton", background="#d97706", foreground="#ffffff",
+                bordercolor="#d97706", focuscolor=bg, relief="flat",
+                lightcolor="#d97706", darkcolor="#d97706", padding=(10, 4),
+                font=("Segoe UI", 9, "bold"),
+            )
+            style.map(
+                "Warn.TButton",
+                background=[("active", "#b75f00"), ("pressed", "#995200")],
+                foreground=[("active", "#ffffff"), ("pressed", "#ffffff")],
+            )
+            # красная — отмена / опасное действие / стоп
+            style.configure(
+                "Danger.TButton", background="#c0392b", foreground="#ffffff",
+                bordercolor="#c0392b", focuscolor=bg, relief="flat",
+                lightcolor="#c0392b", darkcolor="#c0392b", padding=(10, 4),
+                font=("Segoe UI", 9, "bold"),
+            )
+            style.map(
+                "Danger.TButton",
+                background=[("active", "#a93226"), ("pressed", "#922b21")],
+                foreground=[("active", "#ffffff"), ("pressed", "#ffffff")],
+            )
+            # нейтральная — второстепенное действие
+            style.configure(
+                "Neutral.TButton", background="#6c757d", foreground="#ffffff",
+                bordercolor="#6c757d", focuscolor=bg, relief="flat",
+                lightcolor="#6c757d", darkcolor="#6c757d", padding=(8, 3),
+            )
+            style.map(
+                "Neutral.TButton",
+                background=[("active", "#5a6268"), ("pressed", "#4c5258")],
+                foreground=[("active", "#ffffff"), ("pressed", "#ffffff")],
+            )
             # подпись ошибки валидации поля
             style.configure("Error.TLabel", background=bg, foreground="#ff8080")
             style.configure(
@@ -606,6 +653,53 @@ class ConverterGui:
             style.map(
                 "Accent.TButton",
                 background=[("active", "#24913c"), ("pressed", "#1f7e34")],
+                foreground=[("active", "#ffffff"), ("pressed", "#ffffff")],
+            )
+            # синяя — действие с дополнительной настройкой (инструменты)
+            style.configure(
+                "Info.TButton", background="#2b6cb0", foreground="#ffffff",
+                bordercolor="#2b6cb0", focuscolor=bg, relief="flat",
+                lightcolor="#2b6cb0", darkcolor="#2b6cb0", padding=(10, 4),
+                font=("Segoe UI", 9, "bold"),
+            )
+            style.map(
+                "Info.TButton",
+                background=[("active", "#245a94"), ("pressed", "#1d4b7a")],
+                foreground=[("active", "#ffffff"), ("pressed", "#ffffff")],
+            )
+            # оранжевая — предупреждающее действие
+            style.configure(
+                "Warn.TButton", background="#d97706", foreground="#ffffff",
+                bordercolor="#d97706", focuscolor=bg, relief="flat",
+                lightcolor="#d97706", darkcolor="#d97706", padding=(10, 4),
+                font=("Segoe UI", 9, "bold"),
+            )
+            style.map(
+                "Warn.TButton",
+                background=[("active", "#b75f00"), ("pressed", "#995200")],
+                foreground=[("active", "#ffffff"), ("pressed", "#ffffff")],
+            )
+            # красная — отмена / опасное действие / стоп
+            style.configure(
+                "Danger.TButton", background="#c0392b", foreground="#ffffff",
+                bordercolor="#c0392b", focuscolor=bg, relief="flat",
+                lightcolor="#c0392b", darkcolor="#c0392b", padding=(10, 4),
+                font=("Segoe UI", 9, "bold"),
+            )
+            style.map(
+                "Danger.TButton",
+                background=[("active", "#a93226"), ("pressed", "#922b21")],
+                foreground=[("active", "#ffffff"), ("pressed", "#ffffff")],
+            )
+            # нейтральная — второстепенное действие
+            style.configure(
+                "Neutral.TButton", background="#6c757d", foreground="#ffffff",
+                bordercolor="#6c757d", focuscolor=bg, relief="flat",
+                lightcolor="#6c757d", darkcolor="#6c757d", padding=(8, 3),
+            )
+            style.map(
+                "Neutral.TButton",
+                background=[("active", "#5a6268"), ("pressed", "#4c5258")],
                 foreground=[("active", "#ffffff"), ("pressed", "#ffffff")],
             )
             # подпись ошибки валидации поля
@@ -771,11 +865,13 @@ class ConverterGui:
         source_buttons = ttk.Frame(outer)
         source_buttons.grid(row=1, column=2, padx=(8, 0), pady=(0, 8))
         self.select_file_button = ttk.Button(
-            source_buttons, text="Выбрать PDF", command=self._select_pdf
+            source_buttons, text="Выбрать PDF", command=self._select_pdf,
+            style="Neutral.TButton"
         )
         self.select_file_button.grid(row=0, column=0, padx=(0, 6))
         self.select_folder_button = ttk.Button(
-            source_buttons, text="Выбрать папку", command=self._select_source_folder
+            source_buttons, text="Выбрать папку", command=self._select_source_folder,
+            style="Neutral.TButton"
         )
         self.select_folder_button.grid(row=0, column=1)
 
@@ -795,7 +891,8 @@ class ConverterGui:
         self.output_entry = ttk.Entry(outer, textvariable=self.combined_output_var)
         self.output_entry.grid(row=3, column=1, sticky="ew", pady=(0, 8))
         self.select_output_button = ttk.Button(
-            outer, text="Выбрать файл", command=self._select_output_file
+            outer, text="Выбрать файл", command=self._select_output_file,
+            style="Neutral.TButton"
         )
         self.select_output_button.grid(
             row=3, column=2, sticky="ew", padx=(8, 0), pady=(0, 8)
@@ -831,23 +928,28 @@ class ConverterGui:
         actions.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(0, 8))
         actions.columnconfigure(2, weight=1)
         self.start_button = ttk.Button(
-            actions, text="Начать конвертацию", command=self._start
+            actions, text="Начать конвертацию", command=self._start,
+            style="Accent.TButton",
         )
         self.start_button.grid(row=0, column=0, padx=(0, 8))
         self.stop_button = ttk.Button(
-            actions, text="Остановить", command=self._stop, state="disabled"
+            actions, text="Остановить", command=self._stop, state="disabled",
+            style="Danger.TButton",
         )
         self.stop_button.grid(row=0, column=1)
         self.open_folder_button = ttk.Button(
-            actions, text="Перейти в папку", command=self._open_output_folder
+            actions, text="Перейти в папку", command=self._open_output_folder,
+            style="Neutral.TButton",
         )
         self.open_folder_button.grid(row=0, column=2, sticky="w", padx=(12, 0))
         self.open_codes_button = ttk.Button(
-            actions, text="Открыть код", command=self._open_codes_dialog
+            actions, text="Открыть код", command=self._open_codes_dialog,
+            style="Info.TButton",
         )
         self.open_codes_button.grid(row=0, column=3, sticky="w", padx=(12, 0))
         self.excel_button = ttk.Button(
-            actions, text="Выгрузить Excel", command=self._export_excel
+            actions, text="Выгрузить Excel", command=self._export_excel,
+            style="Warn.TButton",
         )
         self.excel_button.grid(row=0, column=4, sticky="w", padx=(12, 0))
         ttk.Label(actions, textvariable=self.status_var).grid(
@@ -899,11 +1001,13 @@ class ConverterGui:
         self.dm_csv_entry = ttk.Entry(data_frame, textvariable=self.dm_csv_var)
         self.dm_csv_entry.grid(row=0, column=1, sticky="ew", pady=(0, 8))
         self.dm_pick_files_btn = ttk.Button(
-            data_frame, text="Выбрать файлы", command=self._select_dm_csv
+            data_frame, text="Выбрать файлы", command=self._select_dm_csv,
+            style="Neutral.TButton"
         )
         self.dm_pick_files_btn.grid(row=0, column=2, padx=(8, 0), pady=(0, 8))
         self.dm_pick_folder_btn = ttk.Button(
-            data_frame, text="Выбрать папку", command=self._select_dm_folder
+            data_frame, text="Выбрать папку", command=self._select_dm_folder,
+            style="Neutral.TButton"
         )
         self.dm_pick_folder_btn.grid(row=0, column=3, padx=(8, 0), pady=(0, 8))
 
@@ -1060,7 +1164,8 @@ class ConverterGui:
         )
         self.dm_pdf_entry = ttk.Entry(output_frame, textvariable=self.dm_pdf_var)
         self.dm_pdf_entry.grid(row=0, column=1, sticky="ew", pady=(0, 8))
-        ttk.Button(output_frame, text="Выбрать PDF", command=self._select_dm_pdf).grid(
+        ttk.Button(output_frame, text="Выбрать PDF", command=self._select_dm_pdf,
+                  style="Neutral.TButton").grid(
             row=0, column=2, padx=(8, 0), pady=(0, 8)
         )
 
@@ -1114,27 +1219,33 @@ class ConverterGui:
             self.dm_generate_button, "Создать PDF с этикетками из выбранного CSV."
         )
         self.dm_openpdf_button = ttk.Button(
-            dm_actions, text="📂 Открыть PDF", command=self._open_dm_pdf
+            dm_actions, text="📂 Открыть PDF", command=self._open_dm_pdf,
+            style="Neutral.TButton"
         )
         self.dm_openpdf_button.grid(row=0, column=1, padx=(0, 6), pady=2)
         self.dm_preview_button = ttk.Button(
-            dm_actions, text="👁 Предпросмотр", command=self._open_full_preview
+            dm_actions, text="👁 Предпросмотр", command=self._open_full_preview,
+            style="Info.TButton"
         )
         self.dm_preview_button.grid(row=0, column=2, padx=(0, 6), pady=2)
         self.dm_print_button = ttk.Button(
-            dm_actions, text="🖨 Печать", command=self._print_dm_pdf
+            dm_actions, text="🖨 Печать", command=self._print_dm_pdf,
+            style="Warn.TButton"
         )
         self.dm_print_button.grid(row=0, column=3, padx=(0, 6), pady=2)
         self.dm_openfolder_button = ttk.Button(
-            dm_actions, text="📁 Открыть папку", command=self._open_dm_output_folder
+            dm_actions, text="📁 Открыть папку", command=self._open_dm_output_folder,
+            style="Neutral.TButton"
         )
         self.dm_openfolder_button.grid(row=0, column=4, padx=(0, 6), pady=2)
         self.dm_checkcodes_button = ttk.Button(
-            dm_actions, text="✔ Проверить коды", command=self._check_dm_codes
+            dm_actions, text="✔ Проверить коды", command=self._check_dm_codes,
+            style="Info.TButton"
         )
         self.dm_checkcodes_button.grid(row=0, column=5, padx=(0, 6), pady=2)
         self.dm_exportpng_button = ttk.Button(
-            dm_actions, text="🖼 Экспорт PNG", command=self._export_dm_png
+            dm_actions, text="🖼 Экспорт PNG", command=self._export_dm_png,
+            style="Warn.TButton"
         )
         self.dm_exportpng_button.grid(row=0, column=6, padx=(0, 6), pady=2)
 
@@ -1154,11 +1265,13 @@ class ConverterGui:
         self.dm_profiles_combo.grid(row=0, column=1, sticky="ew", padx=(0, 8))
         self.dm_profiles_combo.bind("<<ComboboxSelected>>", self._apply_selected_profile)
         self.dm_save_profile_button = ttk.Button(
-            profile_row, text="Сохранить шаблон", command=self._save_profile_dialog
+            profile_row, text="Сохранить шаблон", command=self._save_profile_dialog,
+            style="Info.TButton"
         )
         self.dm_save_profile_button.grid(row=0, column=2, padx=(0, 6))
         self.dm_load_profile_button = ttk.Button(
-            profile_row, text="Загрузить шаблон", command=self._load_profile_dialog
+            profile_row, text="Загрузить шаблон", command=self._load_profile_dialog,
+            style="Neutral.TButton"
         )
         self.dm_load_profile_button.grid(row=0, column=3)
         self._refresh_profiles_combo()
@@ -1217,7 +1330,8 @@ class ConverterGui:
         self.quick_code_text.grid(row=1, column=0, sticky="ew", padx=(0, 6))
         self.quick_code_text.bind("<KeyRelease>", self._on_quick_code_change)
         self.quick_code_text.bind("<Control-Return>", self._quick_generate)
-        ttk.Button(qrow, text="Проверить", command=self._quick_generate).grid(
+        ttk.Button(qrow, text="Проверить", command=self._quick_generate,
+                   style="Accent.TButton").grid(
             row=2, column=0, sticky="w", padx=(0, 6), pady=(6, 0))
         # текст кода — только первая строка: код всегда один
         self.quick_code_text.bind(
@@ -1451,6 +1565,10 @@ class ConverterGui:
 
         self.dm_status_var.set("Экспорт PNG...")
         self.dm_exportpng_button.configure(state="disabled")
+        self._generating = True
+        self._cancel_event = threading.Event()
+        self._dm_progress_state = [0, total_codes]
+        self._open_progress_dialog("Экспорт PNG", total_codes)
 
         # Собираем настройки в главном потоке (Tk-переменные нельзя читать
         # из фонового потока)
@@ -1505,6 +1623,8 @@ class ConverterGui:
                     size_expiry=settings["size_expiry"],
                     size_batch=settings["size_batch"],
                     size_code=settings["size_code"],
+                    progress_cb=lambda done, total: self._on_progress_state(done, total),
+                    cancel_event=self._cancel_event,
                 )
                 self.events.put(("dm_png_exported", {
                     "saved": int(saved),
@@ -1744,9 +1864,11 @@ class ConverterGui:
         self.dm_status_var.set(f"Генерация (всего: {total_codes})...")
         self.dm_generate_button.configure(state="disabled")
         self._generating = True
+        self._cancel_event = threading.Event()
         self._dm_progress_state = [0, total_codes]  # (done, total) обновляется из потока
         self.dm_progress.configure(value=0)
         self.dm_progress_label.configure(text=f"0 из {total_codes}")
+        self._open_progress_dialog("Генерация PDF", total_codes)
 
         def _poll_progress() -> None:
             if not self._generating:
@@ -1802,8 +1924,7 @@ class ConverterGui:
             try:
                 csv_text = self._collect_dm_csv_text()
                 def _on_progress(done, total):
-                    self._dm_progress_state[0] = done
-                    self._dm_progress_state[1] = total
+                    self._on_progress_state(done, total)
                 pages, err, save_path = generate_label_pdf(
                     csv_text,
                     out_path,
@@ -1830,6 +1951,7 @@ class ConverterGui:
                     size_batch=settings["size_batch"],
                     size_code=settings["size_code"],
                     progress_cb=_on_progress,
+                    cancel_event=self._cancel_event,
                 )
                 # реальный путь сохранения (учитывает копии с номером вместо
                 # перезаписи, если файл уже существовал) — напрямую ОТ generator
@@ -1855,6 +1977,83 @@ class ConverterGui:
                 }))
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _on_progress_state(self, done: int, total: int) -> None:
+        """Обновляет состояние прогресса (безопасно вызывается из потока)."""
+        self._dm_progress_state[0] = done
+        self._dm_progress_state[1] = total
+
+    def _open_progress_dialog(self, title: str, total: int) -> None:
+        """Показывает модальное окно прогресса генерации с кнопкой «Отмена».
+
+        Создаётся дочернее модальное окно (grab_set) с прогресс-баром и кнопкой
+        «Отмена», которая ставит self._cancel_event. Окно закрывается вызовом
+        self._close_progress_dialog() по завершении генерации.
+        """
+        if hasattr(self, "_progress_win") and self._progress_win is not None:
+            try:
+                self._progress_win.destroy()
+            except Exception:
+                pass
+        win = tk.Toplevel(self.root)
+        win.title(title)
+        win.resizable(False, False)
+        win.transient(self.root)
+        win.grab_set()
+        win.protocol("WM_DELETE_WINDOW", self._cancel_and_close_progress)
+        ttk.Label(win, text=title).pack(padx=16, pady=(12, 4))
+        bar = ttk.Progressbar(win, mode="determinate", maximum=1000, length=360)
+        bar.pack(padx=16, pady=4)
+        info = ttk.Label(win, text="Подготовка…")
+        info.pack(padx=16, pady=4)
+        btns = ttk.Frame(win)
+        btns.pack(pady=8)
+        cancel_btn = ttk.Button(btns, text="Отмена", style="Danger.TButton",
+                                command=self._cancel_and_close_progress)
+        cancel_btn.pack()
+        self._progress_win = win
+        self._progress_bar = bar
+        self._progress_info = info
+        self._progress_total = total or 1
+        self._progress_done = 0
+        self._poll_progress_dialog()
+
+    def _poll_progress_dialog(self) -> None:
+        """Обновляет прогресс-бар модального окна (вызывается по таймеру)."""
+        win = getattr(self, "_progress_win", None)
+        if win is None or not win.winfo_exists():
+            return
+        done, total = self._dm_progress_state
+        self._progress_done = done
+        self._progress_total = total or 1
+        pct = int(done * 1000.0 / self._progress_total)
+        try:
+            self._progress_bar.configure(value=pct)
+            self._progress_info.configure(text=f"Обработано: {done} из {total}")
+        except Exception:
+            pass
+        self.root.after(100, self._poll_progress_dialog)
+
+    def _cancel_and_close_progress(self) -> None:
+        """Кнопка «Отмена»: ставит флаг отмены и закрывает модальное окно."""
+        try:
+            self._cancel_event.set()
+        except Exception:
+            pass
+        self._close_progress_dialog()
+
+    def _close_progress_dialog(self) -> None:
+        """Закрывает окно прогресса и снимает блокировку главного окна."""
+        win = getattr(self, "_progress_win", None)
+        if win is None:
+            return
+        try:
+            if win.winfo_exists():
+                win.grab_release()
+                win.destroy()
+        except Exception:
+            pass
+        self._progress_win = None
 
     def _parse_label_size(self, label: str) -> tuple[float, float]:
         """Разбирает строку вида '58 × 40' в (ширина, высота) в мм."""
@@ -3348,6 +3547,7 @@ class ConverterGui:
         diag = data.get("diag")
 
         self._generating = False
+        self._close_progress_dialog()
         self.dm_progress.configure(value=100)
         self.dm_progress_label.configure(text="Готово")
         self.dm_generate_button.configure(state="normal")
@@ -3414,6 +3614,8 @@ class ConverterGui:
         out_dir = str(data.get("out_dir", ""))
 
         self.dm_exportpng_button.configure(state="normal")
+        self._generating = False
+        self._close_progress_dialog()
 
         if err:
             messagebox.showerror("Ошибка", err)
