@@ -28,7 +28,7 @@ from version import APP_VERSION
 
 # Адрес манифеста обновлений на GitHub. Замените на фактический URL.
 UPDATE_MANIFEST_URL = (
-    "https://raw.githubusercontent.com/dreamlowa/delfin-etiketki/main/update.json"
+    "https://raw.githubusercontent.com/dreamlowa/DMTools/main/update.json"
 )
 # Имя вспомогательного помощника обновления (собирается отдельно в EXE)
 UPDATER_HELPER = "updater_helper.exe"
