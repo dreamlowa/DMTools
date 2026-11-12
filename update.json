@@ -1,5 +1,5 @@
 {
-  "version": "1.8.29",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.29/DMTools.exe",
-  "notes": "Поля ввода: добавлена надёжная вставка — пункт «Вставить» в контекстном меню и поддержка Ctrl+V во всех полях, включая поле «Код маркировки» во вкладке «CSV → DataMatrix»."
+  "version": "1.8.30",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.30/DMTools.exe",
+  "notes": "Смена издателя: разработчиком указано ООО «Дельфин центр» (в установщике, свойствах EXE и файле «Читать»). Зона тишины вокруг DataMatrix в этикетках."
 }

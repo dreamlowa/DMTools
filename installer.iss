@@ -2,14 +2,14 @@
 ; Компиляция: ISCC.exe installer.iss
 
 #define AppName "DMTools"
-#define AppVersion "1.8.29"
+#define AppVersion "1.8.30"
 #define AppExe "DMTools.exe"
 
 [Setup]
 AppId={{9F4E2C1A-5B31-4C8E-9A2D-7F3B2C0A6D11}
 AppName={#AppName}
 AppVersion={#AppVersion}
-AppPublisher=Лев Чугунов
+AppPublisher=ООО Дельфин центр
 AppPublisherURL=
 AppVerName={#AppName} {#AppVersion}
 DefaultDirName={localappdata}\Programs\DMTools

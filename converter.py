@@ -470,6 +470,32 @@ def find_zint_exe() -> Path | None:
     return None
 
 
+def add_dm_quiet_zone(png_path: Path, scale: int) -> None:
+    """Добавляет вокруг DataMatrix «зону тишины» в 1 модуль по всему периметру.
+
+    По спецификации вокруг DataMatrix обязательна белая зона тишины шириной
+    не менее 1 модуля — иначе код не считывается сканером наклеенным на
+    цветную поверхность. zint сам её НЕ рисует (чёрный код касается краёв
+    PNG), поэтому добавляем белую кайму вручную.
+
+    Модуль при генерации zint с флагом --scale=N равен N пикселей, поэтому
+    отступ по каждой стороне равен scale пикселей.
+    """
+    try:
+        from PIL import Image
+
+        im = Image.open(str(png_path)).convert("RGB")
+        pad = max(int(scale), 1)
+        w, h = im.size
+        if pad <= 0 or w <= 0 or h <= 0:
+            return
+        new = Image.new("RGB", (w + 2 * pad, h + 2 * pad), (255, 255, 255))
+        new.paste(im, (pad, pad))
+        new.save(str(png_path))
+    except Exception:
+        pass
+
+
 def parse_csv_codes(csv_text: str) -> list[str]:
     """Extract full marking codes from CSV text: one code per non-empty line.
     Comma is NOT treated as a separator (serial numbers may contain commas),
@@ -759,6 +785,7 @@ def build_label_page(
             raise RuntimeError(
                 f"Ошибка генерации DataMatrix для кода {idx + 1}: {proc.stderr.strip()}"
             )
+        add_dm_quiet_zone(png_path, scale)
 
         img = pymupdf.open(str(png_path))
         pix = img[0].get_pixmap()
@@ -1125,6 +1152,7 @@ def generate_codes_pdf(
                 )
                 if proc.returncode != 0 or not png_path.exists():
                     return 0, f"Ошибка генерации DataMatrix для кода {idx + 1}: {proc.stderr.strip()}"
+                add_dm_quiet_zone(png_path, scale)
 
                 page = doc.new_page(width=595, height=842)
                 page.insert_image(pymupdf.Rect(197, 220, 398, 421), filename=str(png_path))
