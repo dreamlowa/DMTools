@@ -44,18 +44,70 @@ class HidInfo:
 
 
 # Производители, чьи сканеры штрихкодов чаще всего встречаются.
-# Список не исчерпывающий — используется только для подсказки в UI.
+# Используется, чтобы предлагать устройства в настройках.
 KNOWN_SCANNER_VIDS = {
     "0536",  # Hand Held Products / Honeywell
     "05e0",  # Symbol / Zebra
     "0a5f",  # Zebra (Motorola)
     "0463",  # Datalogic
-    "05c6",  # Qualcomm (некоторые встраиваемые)
     "0602",  # Mindeo
+    "2600",  # ZIH Corp / Zebra HD
+    "067b",  # Prolific (часть USB-serial адаптеров сканеров)
+    "10c4",  # Silicon Labs CP210x (USB-serial, часто у сканеров)
 }
-# Из объединённого списка исключаем то, что явно не сканер
-EXCLUDED_WORDS = ("Realtek", "Signetics", "концентратор", "hub", "хаб",
-                  "Wireless Controller", "GamePad", "Джойстик")
+
+# Слова, по которым устройство НЕ похоже на сканер (фильтр по имени).
+# Служат, чтобы не показывать мыши, клавиатуры, тачпады, наушники,
+# камеры, принтеры, концентраторы и т.п.
+NON_SCANNER_WORDS = (
+    "мышь", "mouse", "клавиатур", "keyboard", "тачпад", "touchpad",
+    "сенсорная панель", "наушник", "headphone", "гарнитур", "headset",
+    "камер", "camera", "микрофон", "microphone", "динамик", "speaker",
+    "принтер", "printer", "сканер изображ", "image scanner", "webcam",
+    "концентратор", "hub", "хаб", "ридер", "card reader", "кардридер",
+    "Realtek", "жёсткий диск", "диск", "hard disk", "флеш", "flash",
+    "телефон", "phone", "контроллер", "controller", "джойстик", "joystick",
+    "gaming", "LED", "подсветк", "RGB", "монитор", "monitor", "bt",
+    "bluetooth", "радио", "rf", "беспроводн", "шнур", "кабель", "cable",
+    "заряд", "charg", "usb-концентратор",
+)
+
+# VID, которые почти наверняка НЕ сканеры (бытовая периферия, встроенное ж/д)
+NON_SCANNER_VIDS = {
+    "0bda",  # Realtek — кардридеры/аудио/USB-радио
+    "1ea7",  # дешёвая универсальная USB-периферия (мыши/клавиатуры)
+    "3c4d",  # встроенная клавиатура/тачпад ноутбуков
+    "0d62",  # Darfon (клавиатуры)
+    "046d",  # Logitech (мыши/клавиатуры/камеры)
+    "093a",  # Pixart (мыши/веб-камеры)
+    "1235",  # USB-пульты
+}
+
+
+def _is_scanner_like(name: str, vid: str) -> bool:
+    """Решает, похоже ли устройство на сканер штрихкодов.
+
+    Показывает TRUE (т.е. это кандидат на сканер), если:
+      * имя упоминает сканер/штрих-код, ИЛИ
+      * производитель VID входит в список производителей сканеров,
+    и при этом устройство НЕ выглядит как мышь/клавиатура/тачпад/
+    наушники/принтер/камера/хаб и т.п.
+    """
+    low = name.lower()
+    # явно не сканер по имени
+    if any(w in low for w in NON_SCANNER_WORDS):
+        return False
+    # известный не-сканер по VID
+    if vid in NON_SCANNER_VIDS:
+        return False
+    # по имени похоже на сканер
+    if any(k in low for k in ("сканер", "штрих", "barcode", "scanner",
+                              "маркировк", "datamatrix", "data matrix")):
+        return True
+    # производитель известен как производитель сканеров
+    if vid in KNOWN_SCANNER_VIDS:
+        return True
+    return False
 
 
 def _run_cim(query: str, props: list[str]) -> list[dict]:
@@ -128,8 +180,13 @@ def list_com_ports() -> list[PortInfo]:
             name = item.get("Name") or ""
             # ищем запись, чей DeviceID упоминает наш порт либо имя содержит "COMx"
             if f"({p.device.upper()})" in name.upper() or f"\\{p.device.upper()}" in devid.upper():
+                vid, pid = _parse_vidpid(devid)
+                # COM-порт показываем, если он похож на сканер ИЛИ о нём
+                # ничего не известно (нет имени/VID) — тогда это просто порт
+                if not _is_scanner_like(name, vid) and vid:
+                    break
                 p.name = name
-                _extract_vidpid(devid, p)
+                p.vid, p.pid = vid, pid
                 p.description = name
                 break
         if not p.name:
@@ -138,8 +195,12 @@ def list_com_ports() -> list[PortInfo]:
 
 
 def list_hid_keyboards() -> list[HidInfo]:
-    """Возвращает USB/HID-устройства ввода (возможные сканеры в режиме
-    клавиатуры). Фильтрует по PNPClass Keyboard/HIDClass и наличию VID/PID."""
+    """Возвращает USB/HID-устройства, похожие на сканер (клавиатурный режим).
+
+    Показывает только те устройства, которые могут быть сканером штрихкодов:
+    мыши, клавиатуры, тачпады, наушники, камеры, принтеры, концентраторы и
+    прочая бытовая периферия отсекаются через _is_scanner_like.
+    """
     pnp = _run_cim(
         "($_.PNPClass -in @('Keyboard','HIDClass','USB') -or "
         "$_.DeviceID -like 'USB\\\\*')",
@@ -152,7 +213,7 @@ def list_hid_keyboards() -> list[HidInfo]:
         vid, pid = _parse_vidpid(devid)
         if not vid:
             continue  # без VID/PID не можем идентифицировать устройство
-        if any(w in name for w in EXCLUDED_WORDS):
+        if not _is_scanner_like(name, vid):
             continue
         key = f"{vid}:{pid}"
         if key in seen:

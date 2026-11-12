@@ -2448,89 +2448,77 @@ class ConverterGui:
         counter_var = tk.StringVar(value="Считано кодов: 0")
         done = {"n": 0}
         status_var = tk.StringVar(value="")
-        mode_var = tk.StringVar(value="keyboard")
-        port_var = tk.StringVar(value="")
+        device_var = tk.StringVar(value="")
         com_evt = {"scanner": None}
 
         # ---------- обнаружение оборудования ----------
         hid_items = scanner_devices.list_hid_keyboards()
         com_items = scanner_devices.list_com_ports()
-        if not hid_items and not com_items:
-            status_var.set(
-                "Сканер не обнаружен. Подключите его по USB — как клавиатуру "
-                "или как COM-устройство — и нажмите «Обновить».")
 
-        tk.Label(win, text="Обнаруженное оборудование:",
+        tk.Label(win, text="Найденные сканеры:",
                  font=("Arial", 10, "bold")).pack(anchor="w", padx=16, pady=(12, 2))
-        dev_text = tk.Text(win, width=58, height=7, state="disabled",
-                           font=("Consolas", 9))
-        dev_text.pack(padx=16)
+        tk.Label(win, text="Выберите устройство, которым пользуетесь. "
+                           "Мыши, клавиатуры и другая периферия не показываются.",
+                 wraplength=440, justify="left", fg="#666"
+                 ).pack(anchor="w", padx=16)
 
-        def _fmt_devs() -> str:
-            lines = []
-            if com_items:
-                lines.append("Порты COM (сканер как Serial):")
-                for p in com_items:
-                    lines.append(f"  {p.device} — {p.name}  "
-                                 f"(VID:{p.vid} PID:{p.pid})".rstrip())
-            else:
-                lines.append("Порты COM: не обнаружены")
-            hid = hid_items
-            if hid:
-                lines.append("Устройства USB/HID (сканер как клавиатура):")
-                for h in hid:
-                    mark = "  ⚠ возможно сканер" if scanner_devices.is_likely_scanner_vid(h.vid) else ""
-                    lines.append(f"  {h.name}  (VID:{h.vid} PID:{h.pid}){mark}")
-            else:
-                lines.append("Устройства USB/HID: не обнаружены")
-            return "\n".join(lines)
+        # модель выбора устройства: (метка, ключ)
+        device_list = ttk.Treeview(win, columns=("type",), show="tree",
+                                   height=5, selectmode="browse")
+        device_list.heading("#0", text="Устройство")
+        device_list.column("#0", width=420)
+        device_list.column("type", width=10, stretch=False)
+        device_list.pack(padx=16, pady=(6, 2), fill="x")
+
+        def _collect_devices() -> list[tuple[str, str, str]]:
+            """Возвращает [(метка, тип)], где тип 'keyboard' или 'com:ПОРТ'."""
+            items = []
+            for p in com_items:
+                label = f"{p.name or p.device}  [{p.device}]"
+                items.append((label, f"com:{p.device}"))
+            for h in hid_items:
+                mark = "  (сканер)" if scanner_devices.is_likely_scanner_vid(h.vid) else ""
+                label = f"{h.name}  (VID:{h.vid} PID:{h.pid}){mark}"
+                items.append((label, "keyboard"))
+            return items
 
         def _refresh_devs() -> None:
             nonlocal hid_items, com_items
             hid_items = scanner_devices.list_hid_keyboards()
             com_items = scanner_devices.list_com_ports()
-            dev_text.configure(state="normal")
-            dev_text.delete("1.0", "end")
-            dev_text.insert("1.0", _fmt_devs())
-            dev_text.configure(state="disabled")
-            _rebuild_port_choices()
-            status_var.set("Список оборудования обновлён.")
+            device_list.delete(*device_list.get_children())
+            for label, key in _collect_devices():
+                device_list.insert("", "end", iid=key, text=label,
+                                   values=("usb",))
+            # если выбранное устройство пропало (отключено) — сбрасываем
+            if device_var.get():
+                has = device_var.get() in {k for _l, k in _collect_devices()}
+                if not has:
+                    device_var.set("")
+            if not device_list.get_children():
+                status_var.set(
+                    "Сканер не обнаружен. Подключите его по USB и нажмите «Обновить».")
+            else:
+                status_var.set("Найдено устройств: "
+                               + str(len(device_list.get_children())))
+                # предвыбор первого
+                if not device_var.get():
+                    first = device_list.get_children()[0]
+                    device_list.selection_set(first)
+                    device_var.set(first)
 
-        dev_text.insert("1.0", _fmt_devs())
-        dev_text.configure(state="disabled")
+        def _on_select(_event=None) -> None:
+            sel = device_list.selection()
+            if sel:
+                device_var.set(sel[0])
 
-        body = ttk.Frame(win)
-        body.pack(fill="x", padx=16, pady=(8, 4))
+        device_list.bind("<<TreeviewSelect>>", _on_select)
 
-        ttk.Label(body, text="Режим приёма:").grid(row=0, column=0,
-                                                    sticky="w", padx=(0, 8))
-        row1 = ttk.Frame(body)
-        row1.grid(row=0, column=1, sticky="w")
-        ttk.Radiobutton(row1, text="Клавиатура (USB HID)",
-                        variable=mode_var, value="keyboard"
-                        ).pack(side="left")
-        ttk.Radiobutton(row1, text="COM-порт",
-                        variable=mode_var, value="com"
-                        ).pack(side="left", padx=(12, 0))
+        _refresh_devs()
 
-        ttk.Label(body, text="Порт:").grid(row=1, column=0, sticky="w",
-                                           padx=(0, 8), pady=(6, 0))
-        port_box = ttk.Combobox(body, textvariable=port_var, width=40,
-                                state="readonly")
-        port_box.grid(row=1, column=1, sticky="w", pady=(6, 0))
-
-        def _rebuild_port_choices() -> None:
-            vals = [c.device for c in com_items]
-            port_box["values"] = vals
-            if vals and not port_var.get():
-                port_var.set(vals[0])
-
-        _rebuild_port_choices()
-
-        ttk.Label(body, textvariable=status_var, foreground="#a33",
-                  wraplength=420, justify="left"
-                  ).grid(row=2, column=0, columnspan=2, sticky="w",
-                         pady=(8, 0))
+        ttk.Label(win, textvariable=status_var, foreground="#a33",
+                  wraplength=440, justify="left"
+                  ).pack(anchor="w", padx=16, pady=(4, 0))
 
         # ---------- тест ----------
         sep = ttk.Separator(win, orient="horizontal")
@@ -2567,7 +2555,14 @@ class ConverterGui:
 
         entry.bind("<Return>", _on_local_enter)
 
-        # наблюдатель COM для теста
+        # возвращает выбранное устройство: ("keyboard", "") или ("com", "COM3")
+        def _selected_device() -> tuple[str, str]:
+            key = device_var.get()
+            if key.startswith("com:"):
+                return ("com", key.split(":", 1)[1])
+            return ("keyboard", "")
+
+        # наблюдатель COM для теста (только если выбрано COM-устройство)
         def _start_watch() -> None:
             sc = com_evt.get("scanner")
             if sc is not None:
@@ -2576,10 +2571,12 @@ class ConverterGui:
                 except Exception:
                     pass
                 com_evt["scanner"] = None
-            if mode_var.get() != "com" or not port_var.get():
-                status_var.set("Для COM-проверки выберите режим «COM-порт» и порт.")
+            mode, port = _selected_device()
+            if mode != "com" or not port:
+                status_var.set("Выберите COM-устройство из списка сканеров, "
+                               "чтобы проверить порт.")
                 return
-            status_var.set(f"Открываю {port_var.get()}…")
+            status_var.set(f"Открываю {port}…")
 
             def _on_code(code: str) -> None:
                 # вызов из фонового потока — планируем в GUI
@@ -2588,7 +2585,7 @@ class ConverterGui:
             def _on_err(msg: str) -> None:
                 self.root.after(0, lambda: status_var.set(msg))
 
-            sc = scanner_mod.SerialScanner(port_var.get(), on_code=_on_code,
+            sc = scanner_mod.SerialScanner(port, on_code=_on_code,
                                            on_error=_on_err)
             err = sc.open()
             if err:
@@ -2596,7 +2593,7 @@ class ConverterGui:
                 sc.close()
                 return
             com_evt["scanner"] = sc
-            status_var.set(f"Наблюдатель {port_var.get()} открыт. Наведите сканер.")
+            status_var.set(f"Наблюдатель {port} открыт. Наведите сканер.")
 
         def _stop_watch() -> None:
             sc = com_evt.get("scanner")
@@ -2608,15 +2605,20 @@ class ConverterGui:
                 com_evt["scanner"] = None
                 status_var.set("Наблюдатель остановлен.")
 
-        # ---------- возврат значений в основное окно ----------
+        # ---------- возврат выбора в основное окно ----------
         def _apply_settings() -> None:
-            self.scanner_mode_var = mode_var.get()
-            self.scanner_port_var = port_var.get()
+            mode, port = _selected_device()
+            if not device_var.get():
+                messagebox.showwarning("Сканер", "Не выбрано ни одно устройство.")
+                return
+            self.scanner_mode_var = mode
+            self.scanner_port_var = port
             self._apply_scanner_enabled()
-            mode_label = "COM-порт" if mode_var.get() == "com" else "Клавиатура"
-            port_txt = f" — порт {port_var.get()}" if mode_var.get() == "com" else ""
-            messagebox.showinfo("Сканер",
-                                f"Режим приёма: {mode_label}{port_txt}.")
+            if mode == "com":
+                messagebox.showinfo("Сканер", f"Использую COM-порт {port}.")
+            else:
+                messagebox.showinfo("Сканер",
+                                    "Использую сканер как клавиатуру (USB HID).")
 
         ttk.Label(win, textvariable=result_var, wraplength=430, justify="left"
                   ).pack(anchor="w", padx=16, pady=(4, 0))
@@ -4287,6 +4289,20 @@ class ConverterGui:
         except Exception:
             pass
 
+        # выбор сканера (сохраняем между запусками)
+        try:
+            smode = data.get("scanner_mode")
+            if smode in ("keyboard", "com"):
+                self.scanner_mode_var.set(smode)
+        except Exception:
+            pass
+        try:
+            sport = data.get("scanner_port")
+            if isinstance(sport, str) and sport:
+                self.scanner_port_var.set(sport)
+        except Exception:
+            pass
+
         # настройки вкладки CSV -> DataMatrix
         try:
             if isinstance(data.get("dm_label_size"), str):
@@ -4385,6 +4401,8 @@ class ConverterGui:
             "dm_date_format": self.dm_date_format_var.get(),
             "dm_expiry_format": self.dm_expiry_format_var.get(),
             "profiles": self._profiles,
+            "scanner_mode": self.scanner_mode_var.get(),
+            "scanner_port": self.scanner_port_var.get(),
         }
         try:
             with open(cfg, "w", encoding="utf-8") as fh:
