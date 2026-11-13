@@ -465,31 +465,10 @@ class ConverterGui:
                     pass
 
         def do_paste():
-            # Ручная вставка из буфера: работает и для Entry, и для Text.
-            # (event_generate("<<Paste>>") внутри обработчика Ctrl+V не
-            # срабатывает, поэтому вставляем напрямую.)
-            try:
-                text = entry.clipboard_get()
-            except Exception:
-                return
-            if isinstance(entry, (tk.Text, scrolledtext.ScrolledText)):
-                try:
-                    entry.delete("1.0", "end")
-                    entry.insert("1.0", text)
-                except Exception:
-                    try:
-                        entry.insert("1.0", text)
-                    except Exception:
-                        pass
-            else:
-                try:
-                    entry.delete(0, "end")
-                    entry.insert(0, text)
-                except Exception:
-                    try:
-                        entry.insert(0, text)
-                    except Exception:
-                        pass
+            # Штатная вставка через событие <<Paste>> — надёжно работает и для
+            # Entry, и для ScrolledText. Здесь событие генерируется сама (не в
+            # ответ на Ctrl+V), поэтому рекурсии и задвоения не возникает.
+            entry.event_generate("<<Paste>>")
 
         def do_select_all():
             if isinstance(entry, (tk.Text, scrolledtext.ScrolledText)):
@@ -510,10 +489,10 @@ class ConverterGui:
         menu.add_command(label="Выбрать всё", command=do_select_all)
         entry.bind("<Button-3>", lambda e, m=menu: m.tk_popup(e.x_root, e.y_root))
         entry.bind("<Control-c>", lambda e: (do_copy(), "break")[1])
-        # Перехват Ctrl+V: вставляем сами и не даём штатному <<Paste>> сработать
-        # (иначе текст вставится дважды).
-        entry.bind("<Control-v>", lambda e: do_paste() or "break")
-        entry.bind("<<Paste>>", lambda e: do_paste() or "break")
+        # Ctrl+V НЕ перехватываем намеренно: Tk сам транслирует его в <<Paste>>
+        # (классовая привязка Entry/Text) и вставляет штатно. Любой ручной
+        # перехват с "break" блокирует эту трансляцию и ломает вставку.
+        # <<Paste>> тоже не перехватываем — пусть работает штатный обработчик.
 
     def _setup_dnd(self) -> None:
         try:

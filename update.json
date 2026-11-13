@@ -1,5 +1,5 @@
 {
-  "version": "1.8.33",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.33/DMTools.exe",
-  "notes": "Починена вставка по Ctrl+V в поле «Код маркировки» (Быстрый DataMatrix) и в остальных полях ввода — текст теперь вставляется один раз, без задвоения."
+  "version": "1.8.34",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.34/DMTools.exe",
+  "notes": "Вставка по Ctrl+V во всех полях ввода (включая «Код маркировки») — возвращён штатный механизм вставки Tk, текст вставляется гарантированно и один раз."
 }
