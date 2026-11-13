@@ -1,5 +1,5 @@
 {
-  "version": "1.8.32",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.32/DMTools.exe",
-  "notes": "Ручной ввод кода: укороченный код (01+GTIN+21+серия, как в этикетках CSV → DataMatrix) теперь принимается как корректный — без криптохвоста 91/92 и без разделителей."
+  "version": "1.8.33",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.33/DMTools.exe",
+  "notes": "Починена вставка по Ctrl+V в поле «Код маркировки» (Быстрый DataMatrix) и в остальных полях ввода — текст теперь вставляется один раз, без задвоения."
 }

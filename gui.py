@@ -424,58 +424,96 @@ class ConverterGui:
                 pass
 
     def _enable_copy_menus(self) -> None:
-        """Добавляет контекстное меню «Копировать»/«Выбрать всё» и Ctrl+C
-        для всех полей ввода (Entry) в окне."""
-        def add_menu(entry: tk.Entry) -> None:
-            menu = tk.Menu(entry, tearoff=0)
+        """Добавляет контекстное меню «Копировать»/«Выбрать всё», Ctrl+C и
+        надёжную вставку по Ctrl+V для всех полей ввода (Entry и Text) в окне.
 
-            def do_copy():
+        Вставка по Ctrl+V делегируется штатному событию <<Paste>> — это
+        единственный надёжный механизм, работающий и для Entry, и для Text
+        (многострочное поле «Код маркировки»). Ручная вставка через
+        delete/insert поверх штатной давала двойную вставку и не работала
+        в Text."""
+        for widget in self._iter_entry_widgets(self.root):
+            self._wire_edit_bindings(widget)
+
+    def _iter_entry_widgets(self, widget) -> list:
+        """Возвращает все редактируемые виджеты (Entry/Text/ScrolledText)."""
+        found: list = []
+        for child in widget.winfo_children():
+            if isinstance(child, (ttk.Entry, ttk.Spinbox)):
+                found.append(child)
+            elif isinstance(child, (tk.Text, scrolledtext.ScrolledText)):
+                found.append(child)
+            found.extend(self._iter_entry_widgets(child))
+        return found
+
+    def _wire_edit_bindings(self, entry) -> None:
+        """Вешает на конкретный edited-виджет: контекстное меню, Ctrl+C, Ctrl+V.
+
+        Ctrl+V перехватывается и генерирует штатное <<Paste>> (supported для
+        Entry и Text), затем "break", чтобы не было двойной вставки."""
+        menu = tk.Menu(entry, tearoff=0)
+
+        def do_copy():
+            try:
+                entry.event_generate("<<Copy>>")
+            except Exception:
                 try:
-                    entry.event_generate("<<Copy>>")
+                    sel = entry.selection_get()
+                    entry.clipboard_clear()
+                    entry.clipboard_append(sel)
+                except Exception:
+                    pass
+
+        def do_paste():
+            # Ручная вставка из буфера: работает и для Entry, и для Text.
+            # (event_generate("<<Paste>>") внутри обработчика Ctrl+V не
+            # срабатывает, поэтому вставляем напрямую.)
+            try:
+                text = entry.clipboard_get()
+            except Exception:
+                return
+            if isinstance(entry, (tk.Text, scrolledtext.ScrolledText)):
+                try:
+                    entry.delete("1.0", "end")
+                    entry.insert("1.0", text)
                 except Exception:
                     try:
-                        sel = entry.selection_get()
-                        entry.clipboard_clear()
-                        entry.clipboard_append(sel)
+                        entry.insert("1.0", text)
                     except Exception:
                         pass
-
-            def do_paste():
-                try:
-                    entry.clipboard_get()
-                except Exception:
-                    return
+            else:
                 try:
                     entry.delete(0, "end")
-                    entry.insert(0, entry.clipboard_get())
+                    entry.insert(0, text)
                 except Exception:
                     try:
-                        entry.insert(0, entry.clipboard_get())
+                        entry.insert(0, text)
                     except Exception:
                         pass
 
-            def do_select_all():
-                entry.select_range(0, "end")
-                entry.icursor("end")
+        def do_select_all():
+            if isinstance(entry, (tk.Text, scrolledtext.ScrolledText)):
+                try:
+                    entry.tag_add("sel", "1.0", "end")
+                    entry.mark_set("insert", "end")
+                except Exception:
+                    pass
+            else:
+                try:
+                    entry.select_range(0, "end")
+                    entry.icursor("end")
+                except Exception:
+                    pass
 
-            menu.add_command(label="Копировать", command=do_copy)
-            menu.add_command(label="Вставить", command=do_paste)
-            menu.add_command(label="Выбрать всё", command=do_select_all)
-            entry.bind("<Button-3>", lambda e, m=menu: m.tk_popup(e.x_root, e.y_root))
-            entry.bind("<Control-c>", lambda e: do_copy())
-            entry.bind("<Control-v>", lambda e: do_paste())
-            entry.bind("<<Paste>>", lambda e: do_paste())
-
-        def walk(widget):
-            for child in widget.winfo_children():
-                if isinstance(child, ttk.Entry):
-                    add_menu(child)
-                walk(child)
-
-        try:
-            walk(self.root)
-        except Exception:
-            pass
+        menu.add_command(label="Копировать", command=do_copy)
+        menu.add_command(label="Вставить", command=do_paste)
+        menu.add_command(label="Выбрать всё", command=do_select_all)
+        entry.bind("<Button-3>", lambda e, m=menu: m.tk_popup(e.x_root, e.y_root))
+        entry.bind("<Control-c>", lambda e: (do_copy(), "break")[1])
+        # Перехват Ctrl+V: вставляем сами и не даём штатному <<Paste>> сработать
+        # (иначе текст вставится дважды).
+        entry.bind("<Control-v>", lambda e: do_paste() or "break")
+        entry.bind("<<Paste>>", lambda e: do_paste() or "break")
 
     def _setup_dnd(self) -> None:
         try:
