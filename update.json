@@ -1,5 +1,5 @@
 {
-  "version": "1.8.34",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.34/DMTools.exe",
-  "notes": "Вставка по Ctrl+V во всех полях ввода (включая «Код маркировки») — возвращён штатный механизм вставки Tk, текст вставляется гарантированно и один раз."
+  "version": "1.8.35",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.35/DMTools.exe",
+  "notes": "Починены горячие клавиши: Ctrl+V и Shift+Insert вставляют код, Ctrl+A выделяет всё, Ctrl+C копирует — во всех полях ввода, включая «Код маркировки». Вставка идёт нативным механизмом Tk, работает стабильно."
 }

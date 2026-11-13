@@ -465,22 +465,28 @@ class ConverterGui:
                     pass
 
         def do_paste():
-            # Штатная вставка через событие <<Paste>> — надёжно работает и для
-            # Entry, и для ScrolledText. Здесь событие генерируется сама (не в
-            # ответ на Ctrl+V), поэтому рекурсии и задвоения не возникает.
-            entry.event_generate("<<Paste>>")
+            # Прямой вызов нативной команды вставки Tk (ttk::entry::Paste для
+            # Entry, tk_textPaste для Text). Надёжно работает и из пункта меню,
+            # и из обработчика Ctrl+V — в отличие от event_generate("<<Paste>>"),
+            # который внутри обработчика клавиши не срабатывает.
+            if isinstance(entry, (tk.Text, scrolledtext.ScrolledText)):
+                entry.tk.call("tk_textPaste", entry._w)
+            else:
+                entry.tk.call("ttk::entry::Paste", entry._w)
 
         def do_select_all():
             if isinstance(entry, (tk.Text, scrolledtext.ScrolledText)):
                 try:
                     entry.tag_add("sel", "1.0", "end")
                     entry.mark_set("insert", "end")
+                    return "break"
                 except Exception:
                     pass
             else:
                 try:
-                    entry.select_range(0, "end")
+                    entry.selection_range(0, "end")
                     entry.icursor("end")
+                    return "break"
                 except Exception:
                     pass
 
@@ -489,10 +495,16 @@ class ConverterGui:
         menu.add_command(label="Выбрать всё", command=do_select_all)
         entry.bind("<Button-3>", lambda e, m=menu: m.tk_popup(e.x_root, e.y_root))
         entry.bind("<Control-c>", lambda e: (do_copy(), "break")[1])
-        # Ctrl+V НЕ перехватываем намеренно: Tk сам транслирует его в <<Paste>>
-        # (классовая привязка Entry/Text) и вставляет штатно. Любой ручной
-        # перехват с "break" блокирует эту трансляцию и ломает вставку.
-        # <<Paste>> тоже не перехватываем — пусть работает штатный обработчик.
+        entry.bind("<Control-C>", lambda e: (do_copy(), "break")[1])
+        entry.bind("<Control-Insert>", lambda e: (do_copy(), "break")[1])
+        # Явная привязка вставки: не все темы/системы транслируют Ctrl+V в
+        # <<Paste>> автоматически, поэтому привязываем напрямую. Возврат "break"
+        # не нужен — мы уже вставили, а повторного события нет.
+        entry.bind("<Control-v>", lambda e: do_paste() or "break")
+        entry.bind("<Control-V>", lambda e: do_paste() or "break")
+        entry.bind("<Shift-Insert>", lambda e: do_paste() or "break")
+        entry.bind("<Control-a>", lambda e: do_select_all() or "break")
+        entry.bind("<Control-A>", lambda e: do_select_all() or "break")
 
     def _setup_dnd(self) -> None:
         try:
