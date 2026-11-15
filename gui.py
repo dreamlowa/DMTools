@@ -320,10 +320,32 @@ class ConverterGui:
         help_menu = tk.Menu(menubar, tearoff=0)
         help_menu.add_command(label="Проверить обновления", command=self._check_updates_manual)
         help_menu.add_separator()
+        help_menu.add_command(label="Сообщить об ошибке", command=lambda: self._open_github_issue("bug"))
+        help_menu.add_command(label="Предложить улучшение", command=lambda: self._open_github_issue("feature"))
+        help_menu.add_separator()
         help_menu.add_command(label="О программе", command=self._show_about)
         menubar.add_cascade(label="Справка", menu=help_menu)
 
         self.root.config(menu=menubar)
+
+    def _open_github_issue(self, kind: str) -> None:
+        """Открывает в браузере страницу GitHub Issues репозитория DMTools
+        с предзаполненным типом (bug или feature) в теле.”
+
+        kind: "bug" — «Сообщить об ошибке», "feature" — «Предложить улучшение».
+        """
+        import webbrowser
+        repo_owner = "dreamlowa"
+        repo_name = "DMTools"
+        issue_url = f"https://github.com/{repo_owner}/{repo_name}/issues"
+        try:
+            webbrowser.open(issue_url)
+        except Exception as exc:
+            import tkinter.messagebox as _mb
+            _mb.showerror("Ошибка", f"Не удалось открыть браузер:\n{exc}")
+        # лог в журнал
+        label = "ошибке" if kind == "bug" else "улучшении"
+        self._global_log(f"Открыта страница обращения: сообщить об {label}.")
 
     def _show_about(self) -> None:
         """Показывает окно «О программе»: версия и журнал изменений."""
