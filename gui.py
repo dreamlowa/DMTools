@@ -230,13 +230,18 @@ class ConverterGui:
         self.quick_code_var = tk.StringVar()
         self.quick_status_var = tk.StringVar(value="Вставьте код маркировки и нажмите «Проверить»")
         self._quick_image_ref: object | None = None
+        # --- Вкладка «Топ-10 расширений» ---
+        self.top10_folder_var = tk.StringVar()
+        self.top10_status_var = tk.StringVar(value="Выберите папку, чтобы увидеть топ-10 расширений")
+        self.top10_file_var = tk.StringVar()
+        self.top10_convert_to_var = tk.StringVar(value="Word (.docx)")
         self._profiles: dict[str, dict] = {}
         self._last_generated_pdf: str | None = None
         self._generating = False
 
         # видимость вкладок (галочки в меню «Вид»)
         self._tab_order = ["PDF → CSV", "CSV → DataMatrix",
-                           "Быстрый DataMatrix", "Журнал"]
+                           "Быстрый DataMatrix", "Журнал", "Топ-10"]
         self._tab_visible = {name: tk.BooleanVar(value=True)
                              for name in self._tab_order}
 
@@ -302,6 +307,9 @@ class ConverterGui:
         view_menu.add_checkbutton(
             label="Журнал", variable=self._tab_visible["Журнал"],
             command=lambda: self._toggle_tab("Журнал"))
+        view_menu.add_checkbutton(
+            label="Топ-10", variable=self._tab_visible["Топ-10"],
+            command=lambda: self._toggle_tab("Топ-10"))
         menubar.add_cascade(label="Вид", menu=view_menu)
 
         scanner_menu = tk.Menu(menubar, tearoff=0)
@@ -1480,6 +1488,78 @@ class ConverterGui:
         ttk.Label(
             log_btns, text="Двойной клик по строке — подробности кода (если это код маркировки)."
         ).pack(side="left", padx=12)
+
+        # --- Вкладка 6: Топ-10 расширений + конвертер ---
+        tab6 = ttk.Frame(self.notebook, padding=12)
+        self.notebook.add(tab6, text="Топ-10")
+        tab6.columnconfigure(0, weight=1)
+        tab6.rowconfigure(0, weight=0)
+        tab6.rowconfigure(1, weight=1)
+
+        # --- Блок 1: топ-10 расширений в выбранной папке ---
+        top_frame = ttk.LabelFrame(tab6, text="Топ-10 расширений в папке", padding=(10, 6))
+        top_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        top_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(top_frame, text="Папка:").grid(
+            row=0, column=0, sticky="e", padx=(0, 8), pady=(0, 6))
+        self.top10_folder_entry = ttk.Entry(top_frame, textvariable=self.top10_folder_var)
+        self.top10_folder_entry.grid(row=0, column=1, sticky="ew", pady=(0, 6))
+        ttk.Button(
+            top_frame, text="Выбрать папку", command=self._top10_select_folder,
+            style="Neutral.TButton",
+        ).grid(row=0, column=2, padx=(8, 0), pady=(0, 6))
+        ttk.Button(
+            top_frame, text="Посчитать топ-10", command=self._top10_run,
+            style="Accent.TButton",
+        ).grid(row=0, column=3, padx=(8, 0), pady=(0, 6))
+
+        # таблица топ-10
+        columns = ("ext", "count", "pct")
+        top_tree = ttk.Treeview(top_frame, columns=columns, show="headings", height=10)
+        top_tree.heading("ext", text="Расширение")
+        top_tree.heading("count", text="Файлов")
+        top_tree.heading("pct", text="Доля")
+        top_tree.column("ext", width=160, anchor="w")
+        top_tree.column("count", width=100, anchor="center")
+        top_tree.column("pct", width=100, anchor="center")
+        top_tree.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(4, 0))
+        self.top10_tree = top_tree
+
+        ttk.Label(top_frame, textvariable=self.top10_status_var).grid(
+            row=2, column=0, columnspan=4, sticky="w", pady=(6, 0))
+
+        # --- Блок 2: конвертер файла ---
+        conv_frame = ttk.LabelFrame(tab6, text="Конвертер файла (например, PDF в Word)", padding=(10, 6))
+        conv_frame.grid(row=1, column=0, sticky="nsew")
+        conv_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(conv_frame, text="Файл:").grid(
+            row=0, column=0, sticky="e", padx=(0, 8), pady=(0, 6))
+        self.top10_file_entry = ttk.Entry(conv_frame, textvariable=self.top10_file_var)
+        self.top10_file_entry.grid(row=0, column=1, sticky="ew", pady=(0, 6))
+        ttk.Button(
+            conv_frame, text="Выбрать файл", command=self._top10_select_file,
+            style="Neutral.TButton",
+        ).grid(row=0, column=2, padx=(8, 0), pady=(0, 6))
+
+        ttk.Label(conv_frame, text="Конвертировать в:").grid(
+            row=1, column=0, sticky="e", padx=(0, 8), pady=(0, 6))
+        self.top10_convert_combo = ttk.Combobox(
+            conv_frame, textvariable=self.top10_convert_to_var, state="readonly", width=24,
+            values=("Word (.docx)",),
+        )
+        self.top10_convert_combo.grid(row=1, column=1, sticky="w", pady=(0, 6))
+        ttk.Button(
+            conv_frame, text="Конвертировать", command=self._top10_convert,
+            style="Accent.TButton",
+        ).grid(row=1, column=2, padx=(8, 0), pady=(0, 6))
+
+        ttk.Label(
+            conv_frame,
+            text="Конвертация PDF в Word выполняется локально (PyMuPDF + python-docx).\n"
+                 "Результат сохраняется рядом с исходным файлом.",
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
         # перетаскивание вкладок мышкой
         self._setup_tab_drag()
@@ -3824,6 +3904,89 @@ class ConverterGui:
             path = Path(selected)
             self.source_var.set(str(path))
             self.combined_output_var.set(str(default_combined_output_path(path)))
+
+    def _top10_select_folder(self) -> None:
+        selected = filedialog.askdirectory(title="Выберите папку для топ-10 расширений")
+        if selected:
+            self.top10_folder_var.set(selected)
+            self._top10_run()
+
+    def _top10_run(self) -> None:
+        """Считает топ-10 самых частых расширений файлов в выбранной папке."""
+        folder = self.top10_folder_var.get().strip()
+        if not folder or not Path(folder).is_dir():
+            self.top10_status_var.set("Выберите существующую папку.")
+            return
+        try:
+            counts: dict[str, int] = {}
+            for p in Path(folder).rglob("*"):
+                if p.is_file() and p.suffix:
+                    ext = p.suffix.lower()
+                    counts[ext] = counts.get(ext, 0) + 1
+            if not counts:
+                self.top10_status_var.set("В папке нет файлов с расширениями.")
+                # очищаем таблицу
+                if hasattr(self, "top10_tree"):
+                    for item in self.top10_tree.get_children():
+                        self.top10_tree.delete(item)
+                return
+            total = sum(counts.values())
+            top = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
+            # очищаем и заполняем таблицу
+            if hasattr(self, "top10_tree"):
+                for item in self.top10_tree.get_children():
+                    self.top10_tree.delete(item)
+                for ext, cnt in top:
+                    pct = 100.0 * cnt / total
+                    self.top10_tree.insert("", "end", values=(ext, cnt, f"{pct:.1f}%"))
+            self.top10_status_var.set(
+                f"Файлов всего: {total}, расширений: {len(counts)}. Показаны 10 самых частых."
+            )
+        except Exception as exc:
+            self.top10_status_var.set("Ошибка: " + str(exc))
+
+    def _top10_select_file(self) -> None:
+        selected = filedialog.askopenfilename(title="Выберите файл для конвертации")
+        if selected:
+            self.top10_file_var.set(selected)
+
+    def _top10_convert(self) -> None:
+        """Конвертирует выбранный файл PDF в Word (локально)."""
+        src = self.top10_file_var.get().strip()
+        if not src or not Path(src).is_file():
+            messagebox.showwarning("Конвертер", "Выберите файл для конвертации.")
+            return
+        src_path = Path(src)
+        if src_path.suffix.lower() != ".pdf":
+            messagebox.showwarning(
+                "Конвертер", "Пока поддерживается конвертация только PDF в Word."
+            )
+            return
+        target = src_path.with_suffix(".docx")
+        try:
+            import fitz  # PyMuPDF
+            from docx import Document
+            from docx.shared import Pt
+
+            doc = Document()
+            with fitz.open(str(src_path)) as pdf:
+                for page in pdf:
+                    text = page.get_text("text")
+                    if not text.strip():
+                        continue
+                    # пишем текст страницы абзацами
+                    for line in text.splitlines():
+                        doc.add_paragraph(line)
+            doc.save(str(target))
+            self.top10_status_var.set(
+                f"Готово: {target.name} (рядом с исходным файлом)"
+            )
+            messagebox.showinfo(
+                "Конвертер", f"Создан файл:\n{target}"
+            )
+        except Exception as exc:
+            self.top10_status_var.set("Ошибка конвертации: " + str(exc))
+            messagebox.showerror("Конвертер", f"Ошибка: {exc}")
 
     def _select_output_file(self) -> None:
         current_text = self.combined_output_var.get().strip()

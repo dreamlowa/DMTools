@@ -1,3 +1,4 @@
 PyMuPDF==1.26.7
 Pillow==11.2.1
 zxing-cpp==3.0.0
+python-docx==1.2.0

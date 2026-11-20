@@ -1,5 +1,5 @@
 {
-  "version": "1.8.36",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.36/DMTools.exe",
-  "notes": "В меню «Справка» добавлены пункты «Сообщить об ошибке» и «Предложить улучшение» — открывают страницу Issues в репозитории."
+  "version": "1.8.37",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.37/DMTools.exe",
+  "notes": "Новая вкладка «Топ-10»: показывает 10 самых частых расширений файлов в выбранной папке (с количеством и долей) и конвертирует PDF в Word."
 }
