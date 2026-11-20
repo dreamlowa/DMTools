@@ -1,5 +1,5 @@
 {
-  "version": "1.8.41",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.41/DMTools.exe",
-  "notes": "Конвертер: добавлена конверсия PDF → Excel (.xlsx). Таблицы из страниц PDF извлекаются в листы книги Excel."
+  "version": "1.8.42",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.42/DMTools.exe",
+  "notes": "Конвертер PDF → Excel: теперь сохраняются рамки ячеек и их расположение на странице, а текст вне таблиц размещается с учётом позиции, как в исходном PDF."
 }

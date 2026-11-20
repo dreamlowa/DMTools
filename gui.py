@@ -4135,32 +4135,62 @@ class ConverterGui:
             img = Image.open(str(src_path)).convert("RGB")
             img.save(str(target), "PDF", resolution=150.0)
         elif frm == "PDF" and to == "Excel (.xlsx)":
-            # PDF -> Excel: извлекаем таблицы из всех страниц в листы книги
+            # PDF -> Excel: извлекаем таблицы с учётом координат ячеек (рамок и
+            # расположения) и размещаем их в листы книги.
             import openpyxl
+            from openpyxl.styles import Border, Side
+            thin = Side(style="thin", color="000000")
+            border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
             wb = openpyxl.Workbook()
             wb.remove(wb.active)  # убираем лист по умолчанию
             page_no = 0
             with fitz.open(str(src_path)) as pdf:
                 for page in pdf:
                     page_no += 1
+                    page_w = page.rect.width
+                    page_h = page.rect.height
                     tables = page.find_tables()
                     if not tables.tables:
-                        # нет таблиц — сохраняем просто текст страницы
+                        # нет таблиц — сохраняем текст страницы с учётом расположения
                         ws = wb.create_sheet(title=f"Стр. {page_no}")
-                        text = page.get_text("text").strip()
-                        if text:
-                            for i, line in enumerate(text.splitlines(), start=1):
-                                ws.cell(row=i, column=1, value=line)
+                        scale_x = 70
+                        scale_y = 32
+                        for block in page.get_text("dict")["blocks"]:
+                            if block.get("type") != 0:  # 0 = текст
+                                continue
+                            for line in block.get("lines", []):
+                                x0 = line.get("bbox", [0, 0, 0, 0])[0]
+                                y0 = line.get("bbox", [0, 0, 0, 0])[1]
+                                col = max(1, int(round(x0 / page_w * scale_x)) + 1)
+                                row = max(1, int(round(y0 / page_h * scale_y)) + 1)
+                                text = "".join(
+                                    span.get("text", "") for span in line.get("spans", []))
+                                if text.strip():
+                                    ws.cell(row=row, column=int(col), value=text)
                         continue
                     for t_idx, table in enumerate(tables.tables, start=1):
                         ws = wb.create_sheet(title=f"Стр. {page_no}.{t_idx}")
                         data = table.extract()
                         if not data:
                             continue
-                        for r, row in enumerate(data, start=1):
-                            for c, val in enumerate(row, start=1):
-                                # ячейки могут быть None
-                                ws.cell(row=r, column=c, value=val if val is not None else "")
+                        # масштаб: совмещаем каждую координату PDF-ячейки с ячейкой Excel
+                        scale_x = 70  # ячеек Excel на ширину страницы (ориентировочно)
+                        scale_y = 32  # ячеек Excel на высоту страницы
+                        # определяем, сколько столбцов/строк занимает каждая PDF-ячейка
+                        for ri, row_obj in enumerate(table.rows):
+                            cells = row_obj.cells  # список (x0,y0,x1,y1)
+                            for ci, bbox in enumerate(cells):
+                                x0, y0, x1, y1 = bbox
+                                # column: от 1; учитываем ненулевой старт таблицы по x
+                                col = max(1, int(round(x0 / page_w * scale_x)) + 1)
+                                row = max(1, int(round(y0 / page_h * scale_y)) + 1)
+                                # записываем текст из extract()
+                                if ri < len(data) and ci < len(data[ri]):
+                                    val = data[ri][ci]
+                                    cell = ws.cell(row=row, column=int(col),
+                                                   value=val if val is not None else "")
+                                    cell.border = border
             if not wb.sheetnames:
                 wb.create_sheet(title="Лист 1")
             wb.save(str(target))
