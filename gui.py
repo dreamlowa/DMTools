@@ -4199,6 +4199,8 @@ class ConverterGui:
                         for ri, row_obj in enumerate(table.rows):
                             cells = row_obj.cells  # список (x0,y0,x1,y1)
                             for ci, bbox in enumerate(cells):
+                                if bbox is None:  # пустая ячейка без координат
+                                    continue
                                 x0, y0, x1, y1 = bbox
                                 # column: от 1; учитываем ненулевой старт таблицы по x
                                 col = max(1, int(round(x0 / page_w * scale_x)) + 1)

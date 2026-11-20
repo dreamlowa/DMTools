@@ -1,5 +1,5 @@
 {
-  "version": "1.8.43",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.43/DMTools.exe",
-  "notes": "В конвертер добавлена кнопка «Открыть папку» (открывает папку с результатом рядом с выбранным файлом). Обновление теперь спрашивает подтверждение перед установкой."
+  "version": "1.8.44",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.44/DMTools.exe",
+  "notes": "Исправлена ошибка конвертации PDF→Excel «cannot unpack non-iterable NoneType object» (пустые ячейки таблиц без координат больше не ломают конвертацию)."
 }
