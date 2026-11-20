@@ -432,19 +432,21 @@ class ConverterGui:
         threading.Thread(target=work, daemon=True).start()
 
     def _ask_update(self, update: dict) -> None:
-        """Запускает обновление без лишних вопросов: уведомляет неблокирующим
-        баннером и сразу начинает загрузку новой версии."""
+        """Спрашивает пользователя, обновить ли программу. Только после
+        подтверждения запускает загрузку новой версии."""
         version = update.get("version", "?")
-        # неблокирующее уведомление, которое само исчезает через несколько секунд
-        self._show_toast(
-            f"Доступна новая версия v{version}.\nОбновление запущено — программа "
-            "закроется, загрузит новую версию и откроется автоматически."
-        )
+        notes = update.get("notes")
+        text = (f"Доступна новая версия v{version}."
+                + (f"\n\nЧто нового:\n{notes}" if notes else "")
+                + "\n\nОбновить программу?")
+        answer = messagebox.askyesno("Обновление", text)
+        if not answer:
+            return
         err = run_self_update(update["url"])
         if err:
             messagebox.showerror("Обновление", err)
             return
-        # закрываем окно через небольшую паузу, чтобы уведомление успело отобразиться
+        # закрываем окно через небольшую паузу, чтобы сообщение успело отобразиться
         self.root.after(600, self._close_for_update)
 
     def _close_for_update(self) -> None:
@@ -1557,7 +1559,11 @@ class ConverterGui:
             conv_frame,
             text="Выберите исходный формат, целевой формат, файл и нажмите «Конвертировать».\n"
                  "Результат сохраняется рядом с исходным файлом.",
-        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Button(
+            conv_frame, text="Открыть папку", command=self._top10_open_folder,
+            style="Neutral.TButton",
+        ).grid(row=3, column=2, padx=(8, 0), pady=(6, 0))
 
         # --- Вкладка Журнал: всегда добавляется ПОСЛЕДНЕЙ, чтобы она была
         #     самой правой в ленте независимо от количества вкладок. ---
@@ -3948,6 +3954,18 @@ class ConverterGui:
         selected = filedialog.askopenfilename(title="Выберите файл для конвертации")
         if selected:
             self.top10_file_var.set(selected)
+
+    def _top10_open_folder(self) -> None:
+        """Открывает папку, где лежит выбранный файл (рядом с ним сохраняется результат)."""
+        src = self.top10_file_var.get().strip()
+        folder = str(Path(src).parent) if src and Path(src).parent.exists() else None
+        if not folder:
+            messagebox.showinfo("Открыть папку", "Сначала выберите файл для конвертации.")
+            return
+        try:
+            os.startfile(folder)  # type: ignore[attr-defined]
+        except OSError:
+            messagebox.showerror("Открыть папку", f"Не удалось открыть папку:\n{folder}")
 
     def _top10_convert(self) -> None:
         """Конвертирует выбранный файл из выбранного формата в указанный формат
