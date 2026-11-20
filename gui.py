@@ -230,10 +230,11 @@ class ConverterGui:
         self.quick_code_var = tk.StringVar()
         self.quick_status_var = tk.StringVar(value="Вставьте код маркировки и нажмите «Проверить»")
         self._quick_image_ref: object | None = None
-        # --- Вкладка «Топ-10 расширений» ---
+        # --- Вкладка «Топ-10» (расширения + универсальный конвертер) ---
         self.top10_folder_var = tk.StringVar()
         self.top10_status_var = tk.StringVar(value="Выберите папку, чтобы увидеть топ-10 расширений")
         self.top10_file_var = tk.StringVar()
+        self.top10_convert_from_var = tk.StringVar(value="PDF")
         self.top10_convert_to_var = tk.StringVar(value="Word (.docx)")
         self._profiles: dict[str, dict] = {}
         self._last_generated_pdf: str | None = None
@@ -241,7 +242,7 @@ class ConverterGui:
 
         # видимость вкладок (галочки в меню «Вид»)
         self._tab_order = ["PDF → CSV", "CSV → DataMatrix",
-                           "Быстрый DataMatrix", "Журнал", "Топ-10"]
+                           "Быстрый DataMatrix", "Топ-10", "Журнал"]
         self._tab_visible = {name: tk.BooleanVar(value=True)
                              for name in self._tab_order}
 
@@ -1461,34 +1462,6 @@ class ConverterGui:
         )
         self.quick_preview_canvas.grid(row=3, column=0, sticky="nsew")
 
-        # --- Вкладка 5: Журнал (общий лог событий программы, как в 1С) ---
-        tab5 = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(tab5, text="Журнал")
-        tab5.columnconfigure(0, weight=1)
-        tab5.rowconfigure(1, weight=1)
-
-        ttk.Label(
-            tab5,
-            text="Журнал событий программы: операции, статусы и ошибки со всех вкладок.",
-        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
-
-        self.global_log = scrolledtext.ScrolledText(
-            tab5, state="disabled", wrap="word", width=100, height=24
-        )
-        self.global_log.grid(row=1, column=0, sticky="nsew")
-        # двойной клик по строке журнала — расшифровка найденного в ней кода
-        self.global_log.bind("<Double-Button-1>", self._on_dm_log_double)
-
-        log_btns = ttk.Frame(tab5)
-        log_btns.grid(row=2, column=0, sticky="ew", pady=(8, 0))
-        ttk.Button(
-            log_btns, text="Очистить журнал",
-            command=self._clear_global_log,
-        ).pack(side="left")
-        ttk.Label(
-            log_btns, text="Двойной клик по строке — подробности кода (если это код маркировки)."
-        ).pack(side="left", padx=12)
-
         # --- Вкладка 6: Топ-10 расширений + конвертер ---
         tab6 = ttk.Frame(self.notebook, padding=12)
         self.notebook.add(tab6, text="Топ-10")
@@ -1529,8 +1502,8 @@ class ConverterGui:
         ttk.Label(top_frame, textvariable=self.top10_status_var).grid(
             row=2, column=0, columnspan=4, sticky="w", pady=(6, 0))
 
-        # --- Блок 2: конвертер файла ---
-        conv_frame = ttk.LabelFrame(tab6, text="Конвертер файла (например, PDF в Word)", padding=(10, 6))
+        # --- Блок 2: универсальный конвертер файлов ---
+        conv_frame = ttk.LabelFrame(tab6, text="Конвертер файлов", padding=(10, 6))
         conv_frame.grid(row=1, column=0, sticky="nsew")
         conv_frame.columnconfigure(1, weight=1)
 
@@ -1543,23 +1516,63 @@ class ConverterGui:
             style="Neutral.TButton",
         ).grid(row=0, column=2, padx=(8, 0), pady=(0, 6))
 
-        ttk.Label(conv_frame, text="Конвертировать в:").grid(
+        ttk.Label(conv_frame, text="Из формата:").grid(
             row=1, column=0, sticky="e", padx=(0, 8), pady=(0, 6))
-        self.top10_convert_combo = ttk.Combobox(
-            conv_frame, textvariable=self.top10_convert_to_var, state="readonly", width=24,
-            values=("Word (.docx)",),
+        self.top10_convert_from_combo = ttk.Combobox(
+            conv_frame, textvariable=self.top10_convert_from_var,
+            state="readonly", width=20, values=("PDF", "Word (.docx)", "HTML", "TXT",
+                                                "Markdown (.md)", "CSV", "Excel (.xlsx)"),
         )
-        self.top10_convert_combo.grid(row=1, column=1, sticky="w", pady=(0, 6))
+        self.top10_convert_from_combo.grid(row=1, column=1, sticky="w", pady=(0, 6))
+        self.top10_convert_from_combo.bind("<<ComboboxSelected>>",
+                                           self._top10_on_from_change)
+
+        ttk.Label(conv_frame, text="В формат:").grid(
+            row=2, column=0, sticky="e", padx=(0, 8), pady=(0, 6))
+        self.top10_convert_to_combo = ttk.Combobox(
+            conv_frame, textvariable=self.top10_convert_to_var,
+            state="readonly", width=20, values=("Word (.docx)",),
+        )
+        self.top10_convert_to_combo.grid(row=2, column=1, sticky="w", pady=(0, 6))
         ttk.Button(
             conv_frame, text="Конвертировать", command=self._top10_convert,
             style="Accent.TButton",
-        ).grid(row=1, column=2, padx=(8, 0), pady=(0, 6))
+        ).grid(row=2, column=2, padx=(8, 0), pady=(0, 6))
 
         ttk.Label(
             conv_frame,
-            text="Конвертация PDF в Word выполняется локально (PyMuPDF + python-docx).\n"
-                 "Результат сохраняется рядом с исходным файлом.",
-        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+            text="Поддерживаемые конверсии: PDF⇄Word, PDF→TXT, Word→PDF, HTML→PDF/Word,\n"
+                 "Markdown→HTML/PDF, TXT→PDF/Word, CSV⇄Excel. Результат сохраняется рядом с исходным файлом.",
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
+
+        # --- Вкладка Журнал: всегда добавляется ПОСЛЕДНЕЙ, чтобы она была
+        #     самой правой в ленте независимо от количества вкладок. ---
+        tab5 = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(tab5, text="Журнал")
+        tab5.columnconfigure(0, weight=1)
+        tab5.rowconfigure(1, weight=1)
+
+        ttk.Label(
+            tab5,
+            text="Журнал событий программы: операции, статусы и ошибки со всех вкладок.",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+        self.global_log = scrolledtext.ScrolledText(
+            tab5, state="disabled", wrap="word", width=100, height=24
+        )
+        self.global_log.grid(row=1, column=0, sticky="nsew")
+        # двойной клик по строке журнала — расшифровка найденного в ней кода
+        self.global_log.bind("<Double-Button-1>", self._on_dm_log_double)
+
+        log_btns = ttk.Frame(tab5)
+        log_btns.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        ttk.Button(
+            log_btns, text="Очистить журнал",
+            command=self._clear_global_log,
+        ).pack(side="left")
+        ttk.Label(
+            log_btns, text="Двойной клик по строке — подробности кода (если это код маркировки)."
+        ).pack(side="left", padx=12)
 
         # перетаскивание вкладок мышкой
         self._setup_tab_drag()
@@ -3129,6 +3142,18 @@ class ConverterGui:
 
         def _on_tab_release(_event) -> None:
             self._drag_tab_index = None
+            # «Журнал» всегда должен оставаться ПОСЛЕДНЕЙ вкладкой, даже после
+            # перетаскивания — возвращаем её в самый конец.
+            try:
+                tabs = self.notebook.tabs()
+                if len(tabs) > 1:
+                    # ищем вкладку «Журнал» по тексту
+                    for i, tid in enumerate(tabs):
+                        if self.notebook.tab(tid, "text") == "Журнал" and i != len(tabs) - 1:
+                            self.notebook.insert("end", tid)
+                            break
+            except Exception:
+                pass
 
         self.notebook.bind("<Button-1>", _on_tab_press, add="+")
         self.notebook.bind("<B1-Motion>", _on_tab_motion, add="+")
@@ -3945,48 +3970,167 @@ class ConverterGui:
         except Exception as exc:
             self.top10_status_var.set("Ошибка: " + str(exc))
 
+    def _top10_on_from_change(self, _event: object = None) -> None:
+        """При смене «из формата» обновляем список доступных «в формат»."""
+        frm = self.top10_convert_from_var.get()
+        to_options = {
+            "PDF": ["Word (.docx)", "TXT (.txt)"],
+            "Word (.docx)": ["PDF (.pdf)"],
+            "HTML": ["PDF (.pdf)", "Word (.docx)"],
+            "TXT": ["PDF (.pdf)", "Word (.docx)"],
+            "Markdown (.md)": ["HTML (.html)", "PDF (.pdf)"],
+            "CSV": ["Excel (.xlsx)"],
+            "Excel (.xlsx)": ["CSV (.csv)"],
+        }.get(frm, ["Word (.docx)"])
+        self.top10_convert_to_combo.configure(values=to_options)
+        if to_options:
+            self.top10_convert_to_var.set(to_options[0])
+
     def _top10_select_file(self) -> None:
         selected = filedialog.askopenfilename(title="Выберите файл для конвертации")
         if selected:
             self.top10_file_var.set(selected)
 
     def _top10_convert(self) -> None:
-        """Конвертирует выбранный файл PDF в Word (локально)."""
+        """Конвертирует выбранный файл из одного формата в другой (локально)."""
         src = self.top10_file_var.get().strip()
         if not src or not Path(src).is_file():
             messagebox.showwarning("Конвертер", "Выберите файл для конвертации.")
             return
         src_path = Path(src)
-        if src_path.suffix.lower() != ".pdf":
-            messagebox.showwarning(
-                "Конвертер", "Пока поддерживается конвертация только PDF в Word."
-            )
-            return
-        target = src_path.with_suffix(".docx")
-        try:
-            import fitz  # PyMuPDF
-            from docx import Document
-            from docx.shared import Pt
+        frm = self.top10_convert_from_var.get()
+        to = self.top10_convert_to_var.get()
 
+        # расширение результата по выбранному «в формат»
+        ext_map = {
+            "Word (.docx)": ".docx",
+            "PDF (.pdf)": ".pdf",
+            "TXT (.txt)": ".txt",
+            "HTML (.html)": ".html",
+            "Excel (.xlsx)": ".xlsx",
+            "CSV (.csv)": ".csv",
+        }
+        target_ext = ext_map.get(to, ".out")
+        target = src_path.with_suffix(target_ext)
+        try:
+            self._convert_impl(frm, to, src_path, target)
+            self.top10_status_var.set(
+                f"Готово: {target.name} (рядом с исходным файлом)"
+            )
+            messagebox.showinfo("Конвертер", f"Создан файл:\n{target}")
+        except Exception as exc:
+            self.top10_status_var.set("Ошибка конвертации: " + str(exc))
+            messagebox.showerror("Конвертер", f"Ошибка: {exc}")
+
+    def _convert_impl(self, frm: str, to: str, src_path: Path, target: Path) -> None:
+        """Выполняет конкретную конверсию. Вызывает исключение при ошибке."""
+        import fitz  # PyMuPDF
+
+        if frm == "PDF" and to == "Word (.docx)":
+            from docx import Document
             doc = Document()
             with fitz.open(str(src_path)) as pdf:
                 for page in pdf:
                     text = page.get_text("text")
                     if not text.strip():
                         continue
-                    # пишем текст страницы абзацами
                     for line in text.splitlines():
                         doc.add_paragraph(line)
             doc.save(str(target))
-            self.top10_status_var.set(
-                f"Готово: {target.name} (рядом с исходным файлом)"
-            )
-            messagebox.showinfo(
-                "Конвертер", f"Создан файл:\n{target}"
-            )
-        except Exception as exc:
-            self.top10_status_var.set("Ошибка конвертации: " + str(exc))
-            messagebox.showerror("Конвертер", f"Ошибка: {exc}")
+        elif frm == "PDF" and to == "TXT (.txt)":
+            with fitz.open(str(src_path)) as pdf:
+                text = "\n".join(page.get_text("text") for page in pdf)
+            target.write_text(text, encoding="utf-8")
+        elif frm == "Word (.docx)" and to == "PDF (.pdf)":
+            # Word -> PDF: извлекаем текст из абзацев и строим PDF через PyMuPDF
+            from docx import Document as D
+            doc = D(str(src_path))
+            out = fitz.open()
+            page = out.new_page()
+            y = 50
+            for para in doc.paragraphs:
+                t = para.text.strip()
+                if not t:
+                    continue
+                page.insert_text((50, y), t, fontsize=11)
+                y += 18
+                if y > 790:
+                    page = out.new_page()
+                    y = 50
+            out.save(str(target))
+            out.close()
+        elif frm == "HTML" and to == "PDF (.pdf)":
+            html = src_path.read_text(encoding="utf-8", errors="replace")
+            out = fitz.open()
+            page = out.new_page()
+            page.insert_htmlbox(fitz.Rect(50, 50, 545, 800), html)
+            out.save(str(target))
+            out.close()
+        elif frm == "HTML" and to == "Word (.docx)":
+            from docx import Document as D
+            html = src_path.read_text(encoding="utf-8", errors="replace")
+            # примитивная конвертация: удаляем теги, остаётся текст по абзацам
+            import re
+            doc = D()
+            for block in re.split(r"<\s*p[^>]*>", html):
+                txt = re.sub(r"<[^>]+>", "", block)
+                txt = txt.replace("&nbsp;", " ").strip()
+                if txt:
+                    doc.add_paragraph(txt)
+            doc.save(str(target))
+        elif frm == "TXT" and to == "PDF (.pdf)":
+            text = src_path.read_text(encoding="utf-8", errors="replace")
+            out = fitz.open()
+            page = out.new_page()
+            y = 50
+            for line in text.splitlines():
+                page.insert_text((50, y), line, fontsize=11)
+                y += 18
+                if y > 790:
+                    page = out.new_page()
+                    y = 50
+            out.save(str(target))
+            out.close()
+        elif frm == "TXT" and to == "Word (.docx)":
+            from docx import Document as D
+            doc = D()
+            for line in src_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                doc.add_paragraph(line)
+            doc.save(str(target))
+        elif frm == "Markdown (.md)" and to == "HTML (.html)":
+            import markdown as md
+            html = md.markdown(src_path.read_text(encoding="utf-8", errors="replace"))
+            target.write_text(html, encoding="utf-8")
+        elif frm == "Markdown (.md)" and to == "PDF (.pdf)":
+            import markdown as md
+            html = "<html><body>" + md.markdown(
+                src_path.read_text(encoding="utf-8", errors="replace")) + "</body></html>"
+            out = fitz.open()
+            page = out.new_page()
+            page.insert_htmlbox(fitz.Rect(50, 50, 545, 800), html)
+            out.save(str(target))
+            out.close()
+        elif frm == "CSV" and to == "Excel (.xlsx)":
+            import csv
+            import openpyxl
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            with src_path.open("r", encoding="utf-8", errors="replace", newline="") as f:
+                for row in csv.reader(f):
+                    ws.append(row)
+            wb.save(str(target))
+        elif frm == "Excel (.xlsx)" and to == "CSV (.csv)":
+            import csv
+            import openpyxl
+            wb = openpyxl.load_workbook(str(src_path), read_only=True)
+            ws = wb.active
+            with target.open("w", encoding="utf-8", newline="") as f:
+                writer = csv.writer(f)
+                for row in ws.iter_rows(values_only=True):
+                    writer.writerow(row)
+            wb.close()
+        else:
+            raise RuntimeError(f"Конверсия {frm} → {to} пока не поддерживается.")
 
     def _select_output_file(self) -> None:
         current_text = self.combined_output_var.get().strip()

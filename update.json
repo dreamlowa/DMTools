@@ -1,5 +1,5 @@
 {
-  "version": "1.8.37",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.37/DMTools.exe",
-  "notes": "Новая вкладка «Топ-10»: показывает 10 самых частых расширений файлов в выбранной папке (с количеством и долей) и конвертирует PDF в Word."
+  "version": "1.8.38",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.38/DMTools.exe",
+  "notes": "Вкладка конвертера расширена: выбор «из формата → в формат» (PDF⇄Word, PDF→TXT, HTML→PDF/Word, Markdown→HTML/PDF, TXT→PDF/Word, CSV⇄Excel). Журнал всегда размещается последней вкладкой."
 }
