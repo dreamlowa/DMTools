@@ -496,6 +496,40 @@ def add_dm_quiet_zone(png_path: Path, scale: int) -> None:
         pass
 
 
+def verify_datamatrix_image(
+    png_path: Path,
+    expected: bytes,
+) -> tuple[bool, str]:
+    """Самопроверка сгенерированного DataMatrix: декодирует PNG обратно
+    тем же zxingcpp, что читает PDF, и сверяет байты с ожидаемым кодом.
+
+    Возвращает (ok, detail). ok=False — либо код не распознан, либо
+    распознанные байты не совпали с expected. Вызов не должен ронять
+    генерацию: это предупреждение, а не фатальная ошибка.
+    """
+    try:
+        from PIL import Image as _Img
+
+        img = _Img.open(str(png_path)).convert("L")
+        results = [r for r in zxingcpp.read_barcodes(img) if r.valid]
+    except Exception as exc:
+        return False, f"не удалось прочитать PNG: {exc}"
+
+    if not results:
+        return False, "DataMatrix не распознан (пустой результат)"
+
+    dm = [r for r in results if r.symbology_identifier == "]d2"]
+    if not dm:
+        return False, "DataMatrix не найден (найдены другие штрихкоды)"
+
+    got = bytes(dm[0].bytes)
+    if got != expected:
+        return False, (
+            f"расхождение: декодировано {len(got)} байт, ожидалось {len(expected)}"
+        )
+    return True, ""
+
+
 def parse_csv_codes(csv_text: str) -> list[str]:
     """Extract full marking codes from CSV text: one code per non-empty line.
     Comma is NOT treated as a separator (serial numbers may contain commas),
@@ -711,7 +745,7 @@ def build_label_page(
     size_expiry: float | None = None,
     size_batch: float | None = None,
     size_code: float | None = None,
-) -> None:
+) -> bool:
     """Рендерит одну этикетку нужного размера с DataMatrix по центру.
 
     use_short=True — DataMatrix строится из укороченного кода идентификации
@@ -719,6 +753,9 @@ def build_label_page(
     Под штрихкодом печатается текст кода, дата производства, срок годности
     и номер партии — каждое поле независимо включается/выключается флагами
     show_date/show_expiry/show_batch/show_code.
+
+    Возвращает True, если сгенерированный DataMatrix прошёл самопроверку
+    (декодировался обратно в исходный код), иначе False.
     """
     import subprocess
     import tempfile
@@ -786,6 +823,16 @@ def build_label_page(
                 f"Ошибка генерации DataMatrix для кода {idx + 1}: {proc.stderr.strip()}"
             )
         add_dm_quiet_zone(png_path, scale)
+
+        _code_ok = True
+        try:
+            if use_short:
+                _expected = code_identification(full_code).encode("ascii")
+            else:
+                _expected = full_code.encode("ascii")
+            _code_ok, _ = verify_datamatrix_image(png_path, _expected)
+        except Exception:
+            _code_ok = False
 
         img = pymupdf.open(str(png_path))
         pix = img[0].get_pixmap()
@@ -976,6 +1023,7 @@ def build_label_page(
             page.insert_text(
                 ((w_pt - cw) / 2, bl), chnk, fontsize=ffs, fontname=fname,
             )
+        return _code_ok
 
 
 def generate_label_pdf(
@@ -1030,13 +1078,14 @@ def generate_label_pdf(
 
     skipped: list[str] = []
     ok_count = 0
+    verify_fail: list[str] = []
     doc = pymupdf.open()
     try:
         for idx, full_code in enumerate(codes):
             if cancel_event is not None and cancel_event.is_set():
                 return ok_count, "Отменено пользователем", output_pdf
             try:
-                build_label_page(
+                ok = build_label_page(
                     doc,
                     zint_exe,
                     full_code,
@@ -1065,6 +1114,8 @@ def generate_label_pdf(
                     size_code=size_code,
                 )
                 ok_count += 1
+                if not ok:
+                    verify_fail.append(f"код {idx + 1}: DataMatrix не сошёлся при самопроверке")
                 if progress_cb:
                     progress_cb(ok_count, len(codes))
             except Exception as exc:
@@ -1106,6 +1157,12 @@ def generate_label_pdf(
         detail = "\n".join(skipped)
         warning = (f"{len(skipped)} из {len(codes)} кодов пропущено "
                    f"(ошибочный формат):\n{detail}{save_note}")
+        return page_count, warning, save_path
+
+    if verify_fail:
+        detail = "\n".join(verify_fail)
+        warning = (f"Самопроверка: {len(verify_fail)} из {ok_count} кодов "
+                   f"не прочитались обратно после генерации:\n{detail}{save_note}")
         return page_count, warning, save_path
     return page_count, save_note, save_path
 

@@ -38,6 +38,17 @@ def _safe_startfile(path: str) -> None:
         pass
 
 
+# Кастомные стили кнопок (цветные) — не должны перетираться в серый TButton
+# при перекраске темы в _refresh_style.
+_CUSTOM_BUTTON_STYLES = (
+    "Accent.TButton",
+    "Info.TButton",
+    "Warn.TButton",
+    "Danger.TButton",
+    "Neutral.TButton",
+)
+
+
 def _make_tooltip(widget, text: str):
     """Простая подсказка при наведении курсора на виджет:
     маленькое всплывающее окно с текстом появляется с задержкой и
@@ -196,6 +207,7 @@ class ConverterGui:
         self.worker: threading.Thread | None = None
         self.running = False
         self.last_output_dir: str | None = None
+        self.last_dir: str | None = None
         self._last_codes: list[MarkingCode] = []
         self._multi_source_files: list[Path] = []
         self.outer: ttk.Frame | None = None
@@ -232,6 +244,7 @@ class ConverterGui:
         self._quick_image_ref: object | None = None
         self._profiles: dict[str, dict] = {}
         self._last_generated_pdf: str | None = None
+        self._last_generated_pages: int = 0
         self._generating = False
 
         # видимость вкладок (галочки в меню «Вид»)
@@ -239,12 +252,16 @@ class ConverterGui:
                            "Быстрый DataMatrix", "Журнал"]
         self._tab_visible = {name: tk.BooleanVar(value=True)
                              for name in self._tab_order}
+        # рамки-держатели подписей ошибок дат — фон обновляется вместе с темой
+        self._error_holders: list[tk.Frame] = []
 
         self._load_config()
+        self._archive_log_if_large()
         self._build_menu()
         self._build_ui()
         self._apply_theme()
         self._setup_dnd()
+        self._setup_hotkeys()
         self._update_output_controls()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(100, self._drain_events)
@@ -267,6 +284,9 @@ class ConverterGui:
         file_menu = tk.Menu(menubar, tearoff=0)
         file_menu.add_command(label="Открыть PDF с этикетками", command=self._open_dm_pdf)
         file_menu.add_command(label="Открыть папку с результатами", command=self._open_output_folder)
+        file_menu.add_separator()
+        file_menu.add_command(label="Экспорт настроек…", command=self._export_settings)
+        file_menu.add_command(label="Импорт настроек…", command=self._import_settings)
         file_menu.add_separator()
         file_menu.add_command(label="Выход", command=self._on_close)
         menubar.add_cascade(label="Файл", menu=file_menu)
@@ -588,6 +608,20 @@ class ConverterGui:
             )
         self._update_output_controls()
 
+    def _lock_error_label_height(self, holder: tk.Frame) -> None:
+        """Резервирует фиксированную высоту (≈2 строки) рамки подписи ошибки
+        даты, чтобы появление/исчезание текста не сдвигало остальную форму."""
+        try:
+            import tkinter.font as tkfont
+            probe = ttk.Label(holder, text="А", style="Error.TLabel")
+            font = probe.cget("font")
+            line = tkfont.Font(self.root, font=font).metrics("linespace")
+            probe.destroy()
+            holder.configure(height=2 * (line or 16) + 4)
+            holder.pack_propagate(False)
+        except Exception:
+            pass
+
     def _apply_theme(self) -> None:
         dark = self.dark_var.get()
         style = ttk.Style(self.root)
@@ -806,6 +840,11 @@ class ConverterGui:
             )
 
         self.root.configure(bg=bg)
+        for _holder in getattr(self, "_error_holders", []):
+            try:
+                _holder.configure(bg=field)
+            except Exception:
+                pass
         if self.outer is not None:
             self.outer.configure(style="TFrame")
         if hasattr(self, "global_log"):
@@ -813,9 +852,14 @@ class ConverterGui:
                 self.global_log.configure(bg=field, fg=fg, insertbackground=fg)
             except Exception:
                 pass
-        if hasattr(self, "dm_preview_canvas"):
+        if hasattr(self, "quick_code_text"):
             try:
-                self.dm_preview_canvas.configure(bg=field)
+                self.quick_code_text.configure(bg=field, fg=fg, insertbackground=fg)
+            except Exception:
+                pass
+        if hasattr(self, "quick_preview_canvas"):
+            try:
+                self.quick_preview_canvas.configure(bg=field)
             except Exception:
                 pass
         if hasattr(self, "dm_full_preview_canvas"):
@@ -857,7 +901,7 @@ class ConverterGui:
             elif isinstance(widget, ttk.Radiobutton):
                 widget.configure(style="TRadiobutton")
             elif isinstance(widget, ttk.Button):
-                if str(widget.cget("style")) != "Accent.TButton":
+                if str(widget.cget("style")) not in _CUSTOM_BUTTON_STYLES:
                     widget.configure(style="TButton")
             elif isinstance(widget, ttk.Frame):
                 widget.configure(style="TFrame")
@@ -922,7 +966,6 @@ class ConverterGui:
         self.outer = outer
         outer.grid(row=0, column=0, sticky="nsew")
         outer.columnconfigure(1, weight=1)
-        outer.rowconfigure(10, weight=1)
 
         # Drop zone banner
         drop_outer = ttk.Frame(outer, style="TFrame")
@@ -1047,7 +1090,7 @@ class ConverterGui:
         self.progress.grid(row=9, column=0, columnspan=3, sticky="ew", pady=(0, 10))
 
         # --- Вкладка 2: CSV -> DataMatrix ---
-        tab2 = ttk.Frame(self.notebook, padding=12)
+        tab2 = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(tab2, text="CSV → DataMatrix")
         tab2.columnconfigure(0, weight=1)
 
@@ -1130,31 +1173,35 @@ class ConverterGui:
             row=3, column=0, sticky="e", padx=(0, 8), pady=(0, 8)
         )
         date_row = ttk.Frame(data_frame)
-        date_row.grid(row=3, column=1, columnspan=2, sticky="w", pady=(0, 8))
-        date_sub = ttk.Frame(date_row)
-        date_sub.pack(anchor="w")
-        self.dm_date_entry = ttk.Entry(date_sub, textvariable=self.dm_date_var, width=11)
+        date_row.grid(row=3, column=1, sticky="w", pady=(0, 8))
+        self.dm_date_entry = ttk.Entry(date_row, textvariable=self.dm_date_var, width=15)
         self.dm_date_entry.pack(side="left")
         self.dm_date_entry.bind("<KeyRelease>", self._on_date_format)
         self.dm_date_fmt_combo = ttk.Combobox(
-            date_sub, textvariable=self.dm_date_format_var,
+            date_row, textvariable=self.dm_date_format_var,
             values=self.DATE_FORMATS, state="readonly", width=9,
         )
         self.dm_date_fmt_combo.pack(side="left", padx=(8, 0))
         self.dm_date_fmt_combo.bind("<<ComboboxSelected>>", self._on_date_format)
         self.dm_bold_date_check = ttk.Checkbutton(
-            date_sub, text="Жирн.", variable=self.dm_bold_date_var, command=self._on_show_change
+            date_row, text="Жирн.", variable=self.dm_bold_date_var, command=self._on_show_change
         )
         self.dm_bold_date_check.pack(side="left", padx=(12, 0))
         self.dm_size_date_spin = ttk.Spinbox(
-            date_sub, from_=2, to=20, increment=0.5, width=4,
+            date_row, from_=2, to=20, increment=0.5, width=4,
             textvariable=self.dm_size_date_var, command=self._on_show_change,
         )
         self.dm_size_date_spin.pack(side="left", padx=(8, 0))
+        # подпись ошибки — в рамке фиксированной высоты, чтобы появление/исчезание
+        # текста не сдвигало остальную форму
+        date_err_holder = tk.Frame(date_row)
+        self._lock_error_label_height(date_err_holder)
+        self._error_holders.append(date_err_holder)
+        date_err_holder.pack(anchor="w", pady=(2, 0))
         self.dm_date_error_label = ttk.Label(
-            date_row, text="", style="Error.TLabel", anchor="w", wraplength=360,
+            date_err_holder, text="", style="Error.TLabel", anchor="w", wraplength=360,
         )
-        self.dm_date_error_label.pack(anchor="w", pady=(2, 0))
+        self.dm_date_error_label.pack(anchor="w", fill="x")
         self.dm_date_tooltip = _make_tooltip(
             self.dm_date_entry,
             "Формат по выбору: ММ.ГГГГ / ММ.ГГ / ДД.ММ.ГГГГ / ДД.ММ.ГГ.\n"
@@ -1166,33 +1213,35 @@ class ConverterGui:
             row=4, column=0, sticky="e", padx=(0, 8), pady=(0, 8)
         )
         expiry_row = ttk.Frame(data_frame)
-        expiry_row.grid(row=4, column=1, columnspan=2, sticky="w", pady=(0, 8))
-        expiry_sub = ttk.Frame(expiry_row)
-        expiry_sub.pack(anchor="w")
+        expiry_row.grid(row=4, column=1, sticky="w", pady=(0, 8))
         self.dm_expiry_entry = ttk.Entry(
-            expiry_sub, textvariable=self.dm_expiry_var, width=11
+            expiry_row, textvariable=self.dm_expiry_var, width=15
         )
         self.dm_expiry_entry.pack(side="left")
         self.dm_expiry_entry.bind("<KeyRelease>", self._on_date_format)
         self.dm_expiry_fmt_combo = ttk.Combobox(
-            expiry_sub, textvariable=self.dm_expiry_format_var,
+            expiry_row, textvariable=self.dm_expiry_format_var,
             values=self.DATE_FORMATS, state="readonly", width=9,
         )
         self.dm_expiry_fmt_combo.pack(side="left", padx=(8, 0))
         self.dm_expiry_fmt_combo.bind("<<ComboboxSelected>>", self._on_date_format)
         self.dm_bold_expiry_check = ttk.Checkbutton(
-            expiry_sub, text="Жирн.", variable=self.dm_bold_expiry_var, command=self._on_show_change
+            expiry_row, text="Жирн.", variable=self.dm_bold_expiry_var, command=self._on_show_change
         )
         self.dm_bold_expiry_check.pack(side="left", padx=(12, 0))
         self.dm_size_expiry_spin = ttk.Spinbox(
-            expiry_sub, from_=2, to=20, increment=0.5, width=4,
+            expiry_row, from_=2, to=20, increment=0.5, width=4,
             textvariable=self.dm_size_expiry_var, command=self._on_show_change,
         )
         self.dm_size_expiry_spin.pack(side="left", padx=(8, 0))
+        expiry_err_holder = tk.Frame(expiry_row)
+        self._lock_error_label_height(expiry_err_holder)
+        self._error_holders.append(expiry_err_holder)
+        expiry_err_holder.pack(anchor="w", pady=(2, 0))
         self.dm_expiry_error_label = ttk.Label(
-            expiry_row, text="", style="Error.TLabel", anchor="w", wraplength=360,
+            expiry_err_holder, text="", style="Error.TLabel", anchor="w", wraplength=360,
         )
-        self.dm_expiry_error_label.pack(anchor="w", pady=(2, 0))
+        self.dm_expiry_error_label.pack(anchor="w", fill="x")
         self.dm_expiry_tooltip = _make_tooltip(
             self.dm_expiry_entry,
             "Формат по выбору: ММ.ГГГГ / ММ.ГГ / ДД.ММ.ГГГГ / ДД.ММ.ГГ.\n"
@@ -1205,7 +1254,7 @@ class ConverterGui:
         )
         batch_row = ttk.Frame(data_frame)
         batch_row.grid(row=5, column=1, sticky="w", pady=(0, 8))
-        self.dm_batch_entry = ttk.Entry(batch_row, textvariable=self.dm_batch_var, width=28)
+        self.dm_batch_entry = ttk.Entry(batch_row, textvariable=self.dm_batch_var, width=24)
         self.dm_batch_entry.pack(side="left")
         self.dm_batch_entry.bind("<KeyRelease>", self._on_preview_input_change)
         self.dm_bold_batch_check = ttk.Checkbutton(
@@ -1224,7 +1273,7 @@ class ConverterGui:
         )
         name_row = ttk.Frame(data_frame)
         name_row.grid(row=6, column=1, sticky="w", pady=(0, 8))
-        self.dm_name_entry = ttk.Entry(name_row, textvariable=self.dm_name_var, width=28)
+        self.dm_name_entry = ttk.Entry(name_row, textvariable=self.dm_name_var, width=24)
         self.dm_name_entry.pack(side="left")
         self.dm_name_entry.bind("<KeyRelease>", self._on_preview_input_change)
         self.dm_bold_name_check = ttk.Checkbutton(
@@ -1314,47 +1363,53 @@ class ConverterGui:
         )
         self.dm_size_code_spin.grid(row=1, column=2, sticky="w", pady=(6, 0))
 
-        # --- Строка: кнопки действий (в одну ровную линейку с равными отступами) ---
+        # --- Строка: кнопки действий (две аккуратные линейки по 4, без «тофу»-эмодзи) ---
         dm_actions = ttk.Frame(output_frame)
         dm_actions.grid(row=2, column=0, columnspan=5, sticky="ew", pady=(4, 8))
+        dm_actions.columnconfigure(1, weight=1)
         self.dm_generate_button = ttk.Button(
-            dm_actions, text="📄 Сгенерировать PDF", command=self._generate_dm_pdf,
+            dm_actions, text="Сгенерировать PDF", command=self._generate_dm_pdf,
             style="Accent.TButton",
         )
         self.dm_generate_button.grid(row=0, column=0, padx=(0, 6), pady=2)
         self.dm_generate_tooltip = _make_tooltip(
             self.dm_generate_button, "Создать PDF с этикетками из выбранного CSV."
         )
-        self.dm_openpdf_button = ttk.Button(
-            dm_actions, text="📂 Открыть PDF", command=self._open_dm_pdf,
-            style="Neutral.TButton"
-        )
-        self.dm_openpdf_button.grid(row=0, column=1, padx=(0, 6), pady=2)
         self.dm_preview_button = ttk.Button(
-            dm_actions, text="👁 Предпросмотр", command=self._open_full_preview,
+            dm_actions, text="Предпросмотр", command=self._open_full_preview,
             style="Info.TButton"
         )
         self.dm_preview_button.grid(row=0, column=2, padx=(0, 6), pady=2)
         self.dm_print_button = ttk.Button(
-            dm_actions, text="🖨 Печать", command=self._print_dm_pdf,
+            dm_actions, text="Печать", command=self._print_dm_pdf,
             style="Warn.TButton"
         )
         self.dm_print_button.grid(row=0, column=3, padx=(0, 6), pady=2)
-        self.dm_openfolder_button = ttk.Button(
-            dm_actions, text="📁 Открыть папку", command=self._open_dm_output_folder,
-            style="Neutral.TButton"
-        )
-        self.dm_openfolder_button.grid(row=0, column=4, padx=(0, 6), pady=2)
-        self.dm_checkcodes_button = ttk.Button(
-            dm_actions, text="✔ Проверить коды", command=self._check_dm_codes,
-            style="Info.TButton"
-        )
-        self.dm_checkcodes_button.grid(row=0, column=5, padx=(0, 6), pady=2)
         self.dm_exportpng_button = ttk.Button(
-            dm_actions, text="🖼 Экспорт PNG", command=self._export_dm_png,
+            dm_actions, text="Экспорт PNG", command=self._export_dm_png,
             style="Warn.TButton"
         )
-        self.dm_exportpng_button.grid(row=0, column=6, padx=(0, 6), pady=2)
+        self.dm_exportpng_button.grid(row=1, column=0, padx=(0, 6), pady=2)
+        self.dm_openpdf_button = ttk.Button(
+            dm_actions, text="Открыть PDF", command=self._open_dm_pdf,
+            style="Neutral.TButton"
+        )
+        self.dm_openpdf_button.grid(row=1, column=2, padx=(0, 6), pady=2)
+        self.dm_openfolder_button = ttk.Button(
+            dm_actions, text="Открыть папку", command=self._open_dm_output_folder,
+            style="Neutral.TButton"
+        )
+        self.dm_openfolder_button.grid(row=1, column=3, padx=(0, 6), pady=2)
+        self.dm_checkcodes_button = ttk.Button(
+            dm_actions, text="Проверить коды", command=self._check_dm_codes,
+            style="Info.TButton"
+        )
+        self.dm_checkcodes_button.grid(row=1, column=4, padx=(0, 6), pady=2)
+        self.dm_batchreport_button = ttk.Button(
+            dm_actions, text="Отчёт о партии", command=self._export_batch_report,
+            style="Neutral.TButton"
+        )
+        self.dm_batchreport_button.grid(row=1, column=5, padx=(0, 6), pady=2)
 
         self.dm_action_row = dm_actions
 
@@ -1403,7 +1458,6 @@ class ConverterGui:
             live_frame, bg="#ffffff", highlightthickness=0, height=340
         )
         self.dm_live_canvas.grid(row=0, column=0, sticky="nsew")
-        self.dm_live_canvas.pack_propagate(False)
 
         # при первом построении интерфейса рисуем пустой макет
         self.root.after(100, self._update_live_mock)
@@ -1547,14 +1601,34 @@ class ConverterGui:
     def _select_dm_csv(self) -> None:
         selected = filedialog.askopenfilenames(
             title="Выберите один или несколько CSV-файлов с кодами",
+            initialdir=self._dialog_initial_dir(),
             filetypes=(("CSV files", "*.csv"), ("Text files", "*.txt"), ("All files", "*.*")),
         )
         if selected:
             self._set_dm_csv_files([Path(p) for p in selected])
+            self._remember_dir(str(Path(selected[0]).parent))
+
+    def _dialog_initial_dir(self) -> str:
+        """Начальная папка для диалогов выбора файлов: last_dir, затем last_output_dir."""
+        for d in (getattr(self, "last_dir", None),
+                  getattr(self, "last_output_dir", None)):
+            if d and os.path.isdir(d):
+                return d
+        return str(Path.home())
+
+    def _remember_dir(self, path: str) -> None:
+        """Запоминает последнюю открытую папку, если она существует."""
+        try:
+            p = str(path)
+            if p and os.path.isdir(p):
+                self.last_dir = p
+        except Exception:
+            pass
 
     def _select_dm_folder(self) -> None:
         folder = filedialog.askdirectory(
-            title="Выберите папку с CSV-файлами кодов"
+            title="Выберите папку с CSV-файлами кодов",
+            initialdir=self._dialog_initial_dir(),
         )
         if not folder:
             return
@@ -1567,11 +1641,12 @@ class ConverterGui:
             messagebox.showerror("Ошибка", f"В папке не найдено CSV/TXT-файлов:\n{folder}")
             return
         self._set_dm_csv_files(sorted(files, key=lambda p: str(p).casefold()))
+        self._remember_dir(folder)
 
     def _select_dm_pdf(self) -> None:
         selected = filedialog.asksaveasfilename(
             title="Куда сохранить PDF",
-            initialdir=self.last_output_dir or str(Path.home()),
+            initialdir=self._dialog_initial_dir(),
             initialfile="Коды_DataMatrix.pdf",
             defaultextension=".pdf",
             filetypes=(("PDF files", "*.pdf"), ("All files", "*.*")),
@@ -1579,6 +1654,7 @@ class ConverterGui:
         )
         if selected:
             self.dm_pdf_var.set(selected)
+            self._remember_dir(str(Path(selected).parent))
 
     def _open_dm_pdf(self) -> None:
         """Открывает сгенерированный PDF-файл."""
@@ -1654,10 +1730,11 @@ class ConverterGui:
             return
         out_dir = filedialog.askdirectory(
             title="Куда сохранить PNG-этикетки",
-            initialdir=self.last_output_dir or str(Path.home()),
+            initialdir=self._dialog_initial_dir(),
         )
         if not out_dir:
             return
+        self._remember_dir(out_dir)
 
         bad_date = self._check_bad_date()
         if bad_date:
@@ -1706,6 +1783,8 @@ class ConverterGui:
         }
 
         def work() -> None:
+            import time as _time
+            _start = _time.perf_counter()
             try:
                 saved, err = export_labels_png(
                     csv_text,
@@ -1740,6 +1819,7 @@ class ConverterGui:
                     "err": err or "",
                     "total_codes": total_codes,
                     "out_dir": str(out_dir),
+                    "duration_sec": _time.perf_counter() - _start,
                 }))
             except Exception as exc:
                 self.events.put(("dm_png_exported", {
@@ -1747,6 +1827,7 @@ class ConverterGui:
                     "err": f"Ошибка: {exc}" if str(exc) else "Ошибка экспорта PNG",
                     "total_codes": total_codes,
                     "out_dir": str(out_dir),
+                    "duration_sec": _time.perf_counter() - _start,
                 }))
 
         threading.Thread(target=work, daemon=True).start()
@@ -2048,6 +2129,8 @@ class ConverterGui:
         }
 
         def work() -> None:
+            import time as _time
+            _start = _time.perf_counter()
             try:
                 csv_text = self._collect_dm_csv_text()
                 def _on_progress(done, total):
@@ -2091,6 +2174,7 @@ class ConverterGui:
                     "save_path": str(actual),
                     "total_codes": total_codes,
                     "out_path": str(out_path),
+                    "duration_sec": _time.perf_counter() - _start,
                     "diag": settings["diag"],
                 }))
             except Exception as exc:
@@ -2100,6 +2184,7 @@ class ConverterGui:
                     "save_path": str(out_path),
                     "total_codes": total_codes,
                     "out_path": str(out_path),
+                    "duration_sec": _time.perf_counter() - _start,
                     "diag": settings["diag"],
                 }))
 
@@ -2277,6 +2362,8 @@ class ConverterGui:
         def work() -> None:
             import tempfile
             import traceback
+            import time as _time
+            _start = _time.perf_counter()
             tmp_pdf = Path(tempfile.gettempdir()) / "delfin_dm_print.pdf"
             try:
                 # удаляем временный PDF от прошлой печати, чтобы get save_path
@@ -2304,12 +2391,14 @@ class ConverterGui:
                     "pages": pages,
                     "err": err or "",
                     "tmp_pdf": str(tmp_pdf),
+                    "duration_sec": _time.perf_counter() - _start,
                 }))
             except Exception as exc:
                 self.events.put(("dm_printed", {
                     "pages": 0,
                     "err": f"Ошибка: {exc}" if str(exc) else "Ошибка печати",
                     "tmp_pdf": str(tmp_pdf),
+                    "duration_sec": _time.perf_counter() - _start,
                 }))
 
         threading.Thread(target=work, daemon=True).start()
@@ -2453,11 +2542,65 @@ class ConverterGui:
             if tab_id is None:
                 return
             if var.get():
-                # показываем: вставляем обратно в правильное место по порядку
+                # показываем: возвращаем вкладку и раскладываем все видимые
+                # вкладки в порядке self._tab_order (а не просто в конец)
                 self.notebook.add(tab_id)
+                self._restore_tab_order()
                 self.notebook.select(tab_id)
             else:
                 self.notebook.hide(tab_id)
+                if self.notebook.select():
+                    self.root.after(0, self._fit_window)
+        except Exception:
+            pass
+
+    def _restore_tab_order(self) -> None:
+        """Переставляет видимые вкладки в порядке self._tab_order,
+        чтобы после показа скрытая вкладка вернулась на исходное место.
+
+        ttk.Notebook.tabs() всегда возвращает и скрытые вкладки (hide() лишь
+        ставит state='hidden'), поэтому видимость проверяем по state, а скрытые
+        не трогаем: insert() сохраняет их скрытость."""
+        try:
+            for tab_text in self._tab_order:
+                if not self._tab_visible[tab_text].get():
+                    continue
+                tid = None
+                for token in self.notebook.tabs():
+                    if self.notebook.tab(token, "text") == tab_text:
+                        tid = token
+                        break
+                if tid is None:
+                    continue
+                state = self.notebook.tab(tid, "state") or ""
+                if "hidden" in state:
+                    continue
+                self.notebook.insert("end", tid)
+        except Exception:
+            pass
+
+    def _setup_hotkeys(self) -> None:
+        """Регистрирует горячие клавиши приложения.
+
+        Ctrl+G — сгенерировать PDF, Ctrl+P — печать, Ctrl+E — экспорт PNG,
+        Ctrl+R — проверка кодов. Не трогаем Ctrl+V/Ctrl+A/Ctrl+C (вставка/выделение).
+        """
+        if not hasattr(self, "root"):
+            return
+        try:
+            self.root.bind("<Control-g>", lambda e: (self._generate_dm_pdf() or "break"))
+        except Exception:
+            pass
+        try:
+            self.root.bind("<Control-p>", lambda e: (self._print_dm_pdf() or "break"))
+        except Exception:
+            pass
+        try:
+            self.root.bind("<Control-e>", lambda e: (self._export_dm_png() or "break"))
+        except Exception:
+            pass
+        try:
+            self.root.bind("<Control-r>", lambda e: (self._check_dm_codes() or "break"))
         except Exception:
             pass
 
@@ -2489,18 +2632,22 @@ class ConverterGui:
                 pass
             # если активное поле имеет какой-то текст — переносим его во вкладку
             try:
-                if focus is not None and hasattr(focus, "get"):
-                    try:
-                        val = str(focus.get()).strip()
-                    except Exception:
-                        val = ""
-                elif focus is not None and hasattr(focus, "get_view"):
-                    try:
-                        val = str(focus.get("1.0", "end-1c")).strip()
-                    except Exception:
-                        val = ""
-                else:
-                    val = ""
+                val = ""
+                if focus is not None:
+                    # Entry / Combobox: get() без аргументов
+                    if hasattr(focus, "get"):
+                        try:
+                            candidate = focus.get()
+                            if isinstance(candidate, str):
+                                val = candidate.strip()
+                        except Exception:
+                            val = ""
+                    # Text / ScrolledText: get("1.0","end-1c")
+                    if not val and hasattr(focus, "get") and hasattr(focus, "delete"):
+                        try:
+                            val = str(focus.get("1.0", "end-1c")).strip()
+                        except Exception:
+                            val = ""
                 if val and self._looks_like_code(val):
                     self._on_scanner_code(val)
                     return "break"
@@ -3511,7 +3658,7 @@ class ConverterGui:
             line(self.dm_name_var.get().strip(), bold=self.dm_bold_name_var.get())
             ty += mini + 2
         if self.dm_show_code_var.get() and first_code:
-            shown = first_code.replace("\x1d", "␝")[:40]
+            shown = first_code.replace("\x1d", " / ")[:40]
             line(shown, bold=self.dm_bold_code_var.get())
             ty += mini + 2
         if not first_code:
@@ -3676,14 +3823,14 @@ class ConverterGui:
             return None
         err = self._validate_date_text(text, date_format, allow_future=allow_future)
         try:
-            if self.dark_var.get():
-                bg = "#2b2b2b"
-            else:
-                bg = "#ffffff"
+            style = ttk.Style(self.root)
+            bg = style.lookup("TEntry", "fieldbackground") or "#ffffff"
+            err_bg = style.lookup("Error.TLabel", "foreground") or "#c0392b"
         except Exception:
             bg = "#ffffff"
+            err_bg = "#c0392b"
         if err:
-            widget.configure(background="#ffe0e0")
+            widget.configure(background=err_bg)
         else:
             widget.configure(background=bg)
         return err
@@ -3797,11 +3944,13 @@ class ConverterGui:
     def _select_pdf(self) -> None:
         selected = filedialog.askopenfilenames(
             title="Выберите один или несколько PDF-файлов",
+            initialdir=self._dialog_initial_dir(),
             filetypes=(("PDF files", "*.pdf"), ("All files", "*.*")),
         )
         if selected:
             paths = [Path(p) for p in selected]
             self._multi_source_files = paths
+            self._remember_dir(str(paths[0].parent))
             if len(paths) == 1:
                 path = paths[0]
                 self.source_var.set(str(path))
@@ -3818,10 +3967,14 @@ class ConverterGui:
             self._update_output_controls()
 
     def _select_source_folder(self) -> None:
-        selected = filedialog.askdirectory(title="Выберите папку с PDF-файлами")
+        selected = filedialog.askdirectory(
+            title="Выберите папку с PDF-файлами",
+            initialdir=self._dialog_initial_dir(),
+        )
         if selected:
             self._multi_source_files = []
             path = Path(selected)
+            self._remember_dir(str(path))
             self.source_var.set(str(path))
             self.combined_output_var.set(str(default_combined_output_path(path)))
 
@@ -3860,7 +4013,7 @@ class ConverterGui:
                 "Сначала выполните конвертацию, чтобы появились коды.",
             )
             return
-        default_dir = self.last_output_dir or str(Path.home())
+        default_dir = self._dialog_initial_dir()
         selected = filedialog.asksaveasfilename(
             title="Сохранить Excel-файл",
             initialdir=default_dir,
@@ -4261,7 +4414,10 @@ class ConverterGui:
         actual = data.get("save_path", "")
         out_path = data.get("out_path", "")
         total_codes = int(data.get("total_codes", 0))
+        duration = data.get("duration_sec")
         diag = data.get("diag")
+
+        self._last_generated_pages = pages
 
         self._generating = False
         self._close_progress_dialog()
@@ -4285,6 +4441,10 @@ class ConverterGui:
             return
 
         self.last_output_dir = str(Path(out_path).parent) if out_path else self.last_output_dir
+        if duration is not None:
+            self._log_op(
+                f"Генерация PDF заняла {duration:.1f} сек ({total_codes} кодов)"
+            )
         self._log_op(
             f"Сгенерирован PDF: {actual or out_path} "
             f"(страниц: {pages} из {total_codes})"
@@ -4297,6 +4457,17 @@ class ConverterGui:
         else:
             self.dm_status_var.set(f"Готово: {pages} из {total_codes}")
             self._append_log(f"Создан PDF: {actual}\n  Страниц: {pages}\n")
+            # проверка: сгенерированных этикеток/страниц меньше числа кодов в CSV
+            if total_codes and pages < total_codes:
+                self._log_op(
+                    "ВНИМАНИЕ: страниц PDF меньше числа кодов в CSV "
+                    f"({pages} страниц из {total_codes} кодов) — проверьте CSV."
+                )
+                messagebox.showwarning(
+                    "Расхождение",
+                    f"Сгенерировано страниц: {pages}, а кодов в CSV: {total_codes}.\n"
+                    "Возможно, часть кодов пропущена — проверьте журнал.",
+                )
 
     def _handle_dm_printed(self, data: dict) -> None:
         """Обрабатывает результат подготовки PDF к печати (главный поток)."""
@@ -4305,7 +4476,9 @@ class ConverterGui:
         pages = int(data.get("pages", 0))
         err = str(data.get("err", "") or "")
         tmp_pdf = data.get("tmp_pdf", "")
+        duration = data.get("duration_sec")
 
+        self._last_generated_pages = pages
         self.dm_print_button.configure(state="normal")
 
         if err and pages == 0:
@@ -4320,6 +4493,10 @@ class ConverterGui:
             messagebox.showerror("Ошибка", perr)
             self._log_op(f"Печать не запущена: {perr}")
         else:
+            if duration is not None:
+                self._log_op(
+                    f"Подготовка PDF к печати заняла {duration:.1f} сек ({pages} этикеток)"
+                )
             self._log_op(f"Отправлено на печать: {pages} этикеток")
             self.dm_status_var.set(f"Печать открыта: {pages} этикеток")
 
@@ -4329,6 +4506,7 @@ class ConverterGui:
         err = str(data.get("err", "") or "")
         total_codes = int(data.get("total_codes", 0))
         out_dir = str(data.get("out_dir", ""))
+        duration = data.get("duration_sec")
 
         self.dm_exportpng_button.configure(state="normal")
         self._generating = False
@@ -4338,6 +4516,10 @@ class ConverterGui:
             messagebox.showerror("Ошибка", err)
             self._log_op(f"Экспорт PNG не удался: {err}")
         else:
+            if duration is not None:
+                self._log_op(
+                    f"Экспорт PNG занял {duration:.1f} сек ({total_codes} кодов)"
+                )
             self._log_op(f"Экспорт PNG: сохранено {saved} из {total_codes} в {out_dir}")
             messagebox.showinfo(
                 "Экспорт завершён",
@@ -4595,8 +4777,55 @@ class ConverterGui:
         self.dm_status_var.set(f"Загружен шаблон: {picked}")
         self._log_op(f"Загружен шаблон этикеток: {picked}")
 
+    def _backup_config(self, cfg: Path) -> None:
+        """Делает резервную копию файла конфига рядом с ним (один раз за запуск).
+
+        Копирование выполняется не чаще одного раза на запуск приложения,
+        чтобы не плодить сотни копий при частых сохранениях конфига.
+        """
+        if getattr(self, "_config_backed_up", False):
+            return
+        self._config_backed_up = True
+        try:
+            if not cfg.is_file():
+                return
+            import shutil
+            import datetime
+            stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup = cfg.with_name(f"{cfg.stem}.backup.{stamp}{cfg.suffix}")
+            shutil.copy2(str(cfg), str(backup))
+        except Exception:
+            pass
+
+    def _archive_log_if_large(self, max_bytes: int = 1_000_000) -> None:
+        """Архивирует файл журнала, если он вырос больше max_bytes.
+
+        Переименовывает PDFDataMatrixToCSV_log.txt в PDFDataMatrixToCSV_log.old.txt
+        (однократно за запуск), не давая журналу разрастаться вечно.
+        """
+        if getattr(self, "_log_rotated", False):
+            return
+        self._log_rotated = True
+        try:
+            log_file = log_file_path()
+            if not log_file.is_file():
+                return
+            if log_file.stat().st_size < max_bytes:
+                return
+            import datetime
+            old = log_file.with_name("PDFDataMatrixToCSV_log.old.txt")
+            if old.exists():
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
+            log_file.rename(old)
+        except Exception:
+            pass
+
     def _load_config(self) -> None:
         cfg = config_path()
+        self._backup_config(cfg)
         try:
             with open(cfg, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
@@ -4605,6 +4834,9 @@ class ConverterGui:
         if not isinstance(data, dict):
             return
 
+        saved_last_dir = data.get("last_dir")
+        if isinstance(saved_last_dir, str) and saved_last_dir:
+            self.last_dir = saved_last_dir
         saved_last_dir = data.get("last_output_dir")
         if isinstance(saved_last_dir, str) and saved_last_dir:
             self.last_output_dir = saved_last_dir
@@ -4712,6 +4944,7 @@ class ConverterGui:
         cfg = config_path()
         data = {
             "last_output_dir": self.last_output_dir or "",
+            "last_dir": self.last_dir or "",
             "dark_mode": bool(self.dark_var.get()),
             "escape_mode": self.escape_mode_var.get(),
             "merge_csv": bool(self.merge_csv_var.get()),
@@ -4743,6 +4976,230 @@ class ConverterGui:
                 json.dump(data, fh, ensure_ascii=False, indent=2)
         except OSError:
             pass
+
+    def _collect_settings_dump(self) -> dict:
+        """Собирает в словарь все настройки приложения (для экспорта/импорта).
+        Включает текущие значения из Tk-переменных плюс профили этикеток."""
+        return {
+            "last_output_dir": self.last_output_dir or "",
+            "last_dir": self.last_dir or "",
+            "dark_mode": bool(self.dark_var.get()),
+            "escape_mode": self.escape_mode_var.get(),
+            "merge_csv": bool(self.merge_csv_var.get()),
+            "scanner_enabled": bool(self.scanner_enabled.get()),
+            "scanner_mode": self.scanner_mode_var.get(),
+            "scanner_port": self.scanner_port_var.get(),
+            "dm_label_size": self.dm_label_size_var.get(),
+            "dm_group": self.dm_group_var.get(),
+            "dm_show_date": bool(self.dm_show_date_var.get()),
+            "dm_show_expiry": bool(self.dm_show_expiry_var.get()),
+            "dm_show_batch": bool(self.dm_show_batch_var.get()),
+            "dm_show_code": bool(self.dm_show_code_var.get()),
+            "dm_show_short": bool(self.dm_show_short_var.get()),
+            "dm_bold_name": bool(self.dm_bold_name_var.get()),
+            "dm_bold_date": bool(self.dm_bold_date_var.get()),
+            "dm_bold_expiry": bool(self.dm_bold_expiry_var.get()),
+            "dm_bold_batch": bool(self.dm_bold_batch_var.get()),
+            "dm_bold_code": bool(self.dm_bold_code_var.get()),
+            "dm_size_name": self.dm_size_name_var.get(),
+            "dm_size_date": self.dm_size_date_var.get(),
+            "dm_size_expiry": self.dm_size_expiry_var.get(),
+            "dm_size_batch": self.dm_size_batch_var.get(),
+            "dm_size_code": self.dm_size_code_var.get(),
+            "dm_date_format": self.dm_date_format_var.get(),
+            "dm_expiry_format": self.dm_expiry_format_var.get(),
+            "profiles": self._profiles,
+        }
+
+    def _export_settings(self) -> None:
+        """Сохраняет все настройки в выбранный .json (для переноса на другой ПК)."""
+        default_dir = self.last_dir or self.last_output_dir or str(Path.home())
+        selected = filedialog.asksaveasfilename(
+            title="Экспорт настроек",
+            initialdir=default_dir if os.path.isdir(default_dir) else str(Path.home()),
+            initialfile="DMTools_settings.json",
+            defaultextension=".json",
+            filetypes=(("JSON files", "*.json"), ("All files", "*.*")),
+            confirmoverwrite=False,
+        )
+        if not selected:
+            return
+        dump = {"version": APP_VERSION, "settings": self._collect_settings_dump()}
+        try:
+            with open(selected, "w", encoding="utf-8") as fh:
+                json.dump(dump, fh, ensure_ascii=False, indent=2)
+        except OSError as exc:
+            messagebox.showerror("Ошибка", f"Не удалось сохранить настройки:\n{exc}")
+            return
+        if os.path.isdir(str(Path(selected).parent)):
+            self.last_dir = str(Path(selected).parent)
+        self._log_op(f"Настройки экспортированы: {selected}")
+        messagebox.showinfo("Экспорт настроек", f"Настройки сохранены:\n{selected}")
+
+    def _import_settings(self) -> None:
+        """Загружает настройки из выбранного .json (перенос с другого ПК)."""
+        default_dir = self.last_dir or self.last_output_dir or str(Path.home())
+        selected = filedialog.askopenfilename(
+            title="Импорт настроек",
+            initialdir=default_dir if os.path.isdir(default_dir) else str(Path.home()),
+            filetypes=(("JSON files", "*.json"), ("All files", "*.*")),
+        )
+        if not selected:
+            return
+        try:
+            with open(selected, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("Ошибка", f"Не удалось прочитать файл:\n{exc}")
+            return
+        if not isinstance(data, dict):
+            messagebox.showerror("Ошибка", "Файл некорректен: нет данных настроек.")
+            return
+        # поддерживаем и отдельный файл настроек, и вложенный в {"settings": {...}}
+        settings = data.get("settings") if isinstance(data.get("settings"), dict) else data
+        self._apply_settings_dump(settings)
+        self._save_config()
+        self._refresh_profiles_combo()
+        self._update_live_mock()
+        self._log_op(f"Настройки импортированы: {selected}")
+        messagebox.showinfo("Импорт настроек", "Настройки успешно применены.")
+
+    def _apply_settings_dump(self, settings: dict) -> None:
+        """Применяет словарь настроек к Tk-переменным (общий для импорта)."""
+        if not isinstance(settings, dict):
+            return
+        try:
+            if isinstance(settings.get("last_dir"), str) and settings["last_dir"]:
+                self.last_dir = settings["last_dir"]
+        except Exception:
+            pass
+        try:
+            self.dark_var.set(bool(settings.get("dark_mode", False)))
+        except Exception:
+            pass
+        try:
+            mode = settings.get("escape_mode")
+            if mode in ("gs", "1c", "ozon"):
+                self.escape_mode_var.set(mode)
+        except Exception:
+            pass
+        try:
+            self.merge_csv_var.set(bool(settings.get("merge_csv", False)))
+        except Exception:
+            pass
+        try:
+            self.scanner_mode_var.set(settings.get("scanner_mode", "keyboard"))
+        except Exception:
+            pass
+        try:
+            port = settings.get("scanner_port")
+            if isinstance(port, str):
+                self.scanner_port_var.set(port)
+        except Exception:
+            pass
+        try:
+            if isinstance(settings.get("dm_label_size"), str):
+                self.dm_label_size_var.set(settings["dm_label_size"])
+        except Exception:
+            pass
+        try:
+            if isinstance(settings.get("dm_group"), str):
+                self.dm_group_var.set(settings["dm_group"])
+        except Exception:
+            pass
+        for key, var_name in (
+            ("dm_show_date", "dm_show_date_var"),
+            ("dm_show_expiry", "dm_show_expiry_var"),
+            ("dm_show_batch", "dm_show_batch_var"),
+            ("dm_show_code", "dm_show_code_var"),
+            ("dm_show_short", "dm_show_short_var"),
+            ("dm_bold_name", "dm_bold_name_var"),
+            ("dm_bold_date", "dm_bold_date_var"),
+            ("dm_bold_expiry", "dm_bold_expiry_var"),
+            ("dm_bold_batch", "dm_bold_batch_var"),
+            ("dm_bold_code", "dm_bold_code_var"),
+        ):
+            try:
+                if key in settings:
+                    getattr(self, var_name).set(bool(settings[key]))
+            except Exception:
+                pass
+        for key, var_name in (
+            ("dm_size_name", "dm_size_name_var"),
+            ("dm_size_date", "dm_size_date_var"),
+            ("dm_size_expiry", "dm_size_expiry_var"),
+            ("dm_size_batch", "dm_size_batch_var"),
+            ("dm_size_code", "dm_size_code_var"),
+            ("dm_date_format", "dm_date_format_var"),
+            ("dm_expiry_format", "dm_expiry_format_var"),
+        ):
+            try:
+                val = settings.get(key)
+                if isinstance(val, str):
+                    if var_name.endswith("_format_var"):
+                        if val in self.DATE_FORMATS:
+                            getattr(self, var_name).set(val)
+                    else:
+                        getattr(self, var_name).set(val)
+            except Exception:
+                pass
+        saved_profiles = settings.get("profiles")
+        if isinstance(saved_profiles, dict):
+            self._profiles = {
+                str(name): dict(profile)
+                for name, profile in saved_profiles.items()
+                if isinstance(profile, dict)
+            }
+
+    def _export_batch_report(self) -> None:
+        """Сохраняет текстовый отчёт о партии этикеток (.txt) в главном потоке."""
+        import datetime
+        if getattr(self, "_last_generated_pdf", None):
+            default_pdf = Path(self._last_generated_pdf)
+        else:
+            default_pdf = Path(self.dm_pdf_var.get().strip()) if self.dm_pdf_var.get().strip() else None
+        default_dir = self.last_dir or self.last_output_dir or str(Path.home())
+        selected = filedialog.asksaveasfilename(
+            title="Сохранить отчёт о партии",
+            initialdir=default_dir if os.path.isdir(default_dir) else str(Path.home()),
+            initialfile="Отчёт_о_партии.txt",
+            defaultextension=".txt",
+            filetypes=(("Text files", "*.txt"), ("All files", "*.*")),
+            confirmoverwrite=False,
+        )
+        if not selected:
+            return
+        total_codes = 0
+        try:
+            from converter import parse_csv_codes
+            csv_text = self._collect_dm_csv_text()
+            total_codes = len(parse_csv_codes(csv_text))
+        except Exception:
+            total_codes = 0
+        pages = getattr(self, "_last_generated_pages", 0)
+        lines = [
+            "===== Отчёт о партии этикеток =====",
+            f"Дата/время: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Всего кодов: {total_codes}",
+            f"Наименование: {self.dm_name_var.get().strip()}",
+            f"Дата производства: {self.dm_date_var.get().strip()}",
+            f"Срок годности: {self.dm_expiry_var.get().strip()}",
+            f"Партия: {self.dm_batch_var.get().strip()}",
+            f"Размер этикетки: {self.dm_label_size_var.get().strip()}",
+            f"Путь к PDF: {str(default_pdf) if default_pdf else '—'}",
+            f"Количество страниц: {pages}",
+            "===================================",
+        ]
+        try:
+            with open(selected, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(lines) + "\n")
+        except OSError as exc:
+            messagebox.showerror("Ошибка", f"Не удалось сохранить отчёт:\n{exc}")
+            return
+        if os.path.isdir(str(Path(selected).parent)):
+            self.last_dir = str(Path(selected).parent)
+        self._log_op(f"Отчёт о партии сохранён: {selected}")
+        messagebox.showinfo("Отчёт о партии", f"Отчёт сохранён:\n{selected}")
 
     def _on_close(self) -> None:
         if self.running and not messagebox.askyesno(
