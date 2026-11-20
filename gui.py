@@ -4203,25 +4203,16 @@ class ConverterGui:
                         data = table.extract()
                         if not data:
                             continue
-                        # масштаб: совмещаем каждую координату PDF-ячейки с ячейкой Excel
-                        scale_x = 70  # ячеек Excel на ширину страницы (ориентировочно)
-                        scale_y = 32  # ячеек Excel на высоту страницы
-                        # определяем, сколько столбцов/строк занимает каждая PDF-ячейка
-                        for ri, row_obj in enumerate(table.rows):
-                            cells = row_obj.cells  # список (x0,y0,x1,y1)
-                            for ci, bbox in enumerate(cells):
-                                if bbox is None:  # пустая ячейка без координат
+                        # Структура таблицы уже определена find_tables(): пишем её
+                        # плотно, строка за строкой, начиная с A1, чтобы колонки и
+                        # строки стояли рядом, как в PDF. Рамки сохраняем по каждой
+                        # заполненной ячейке.
+                        for ri, row_vals in enumerate(data):
+                            for ci, val in enumerate(row_vals):
+                                if val is None:
                                     continue
-                                x0, y0, x1, y1 = bbox
-                                # column: от 1; учитываем ненулевой старт таблицы по x
-                                col = max(1, int(round(x0 / page_w * scale_x)) + 1)
-                                row = max(1, int(round(y0 / page_h * scale_y)) + 1)
-                                # записываем текст из extract()
-                                if ri < len(data) and ci < len(data[ri]):
-                                    val = data[ri][ci]
-                                    cell = ws.cell(row=row, column=int(col),
-                                                   value=val if val is not None else "")
-                                    cell.border = border
+                                cell = ws.cell(row=ri + 1, column=ci + 1, value=val)
+                                cell.border = border
             if not wb.sheetnames:
                 wb.create_sheet(title="Лист 1")
             wb.save(str(target))
