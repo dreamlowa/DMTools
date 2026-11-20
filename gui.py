@@ -432,27 +432,54 @@ class ConverterGui:
         threading.Thread(target=work, daemon=True).start()
 
     def _ask_update(self, update: dict) -> None:
-        """Спрашивает пользователя, обновляться ли. При согласии — запускает обновление."""
-        notes = (update.get("notes") or "").strip()
-        msg = (f"Доступна новая версия v{update.get('version')}.\n"
-               f"Текущая версия: v{APP_VERSION}\n")
-        if notes:
-            msg += f"\nЧто нового:\n{notes}\n"
-        msg += "\nСкачать и установить обновление сейчас?"
-        if not messagebox.askyesno("Обновление программы", msg):
-            return
+        """Запускает обновление без лишних вопросов: уведомляет неблокирующим
+        баннером и сразу начинает загрузку новой версии."""
+        version = update.get("version", "?")
+        # неблокирующее уведомление, которое само исчезает через несколько секунд
+        self._show_toast(
+            f"Доступна новая версия v{version}.\nОбновление запущено — программа "
+            "закроется, загрузит новую версию и откроется автоматически."
+        )
         err = run_self_update(update["url"])
         if err:
             messagebox.showerror("Обновление", err)
-        else:
-            messagebox.showinfo(
-                "Обновление",
-                "Обновление запущено. Программа закроется, загрузит новую "
-                "версию и откроется автоматически.")
-            try:
-                self.root.destroy()
-            except Exception:
-                pass
+            return
+        # закрываем окно через небольшую паузу, чтобы уведомление успело отобразиться
+        self.root.after(600, self._close_for_update)
+
+    def _close_for_update(self) -> None:
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+
+    def _show_toast(self, message: str) -> None:
+        """Показывает авто-скрывающийся баннер-уведомление в правом нижнем углу."""
+        try:
+            toast = tk.Toplevel(self.root)
+            toast.overrideredirect(True)
+            toast.attributes("-topmost", True)
+            # тёмный фон с белым текстом, чтобы было видно на любом экране
+            toast.configure(bg="#2C2C2C")
+            label = tk.Label(
+                toast, text=message, bg="#2C2C2C", fg="#FFFFFF",
+                font=("Segoe UI", 10), justify="left",
+                padx=14, pady=12,
+            )
+            label.pack()
+            toast.update_idletasks()
+            w = toast.winfo_reqwidth()
+            h = toast.winfo_reqheight()
+            # размещаем в правом нижнем углу экрана
+            screen_w = toast.winfo_screenwidth()
+            screen_h = toast.winfo_screenheight()
+            x = screen_w - w - 20
+            y = screen_h - h - 60
+            toast.geometry(f"+{x}+{y}")
+            # закрываем через 5 секунд
+            toast.after(5000, lambda: toast.destroy())
+        except Exception:
+            pass
 
     def _enable_copy_menus(self) -> None:
         """Добавляет контекстное меню «Копировать»/«Выбрать всё», Ctrl+C и
@@ -1462,48 +1489,33 @@ class ConverterGui:
         )
         self.quick_preview_canvas.grid(row=3, column=0, sticky="nsew")
 
-        # --- Вкладка 6: Топ-10 расширений + конвертер ---
+        # --- Вкладка 6: Конвертер файлов ---
         tab6 = ttk.Frame(self.notebook, padding=12)
-        self.notebook.add(tab6, text="Топ-10")
+        self.notebook.add(tab6, text="Конвертер")
         tab6.columnconfigure(0, weight=1)
-        tab6.rowconfigure(0, weight=0)
         tab6.rowconfigure(1, weight=1)
 
-        # --- Блок 1: топ-10 расширений в выбранной папке ---
-        top_frame = ttk.LabelFrame(tab6, text="Топ-10 расширений в папке", padding=(10, 6))
-        top_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
-        top_frame.columnconfigure(1, weight=1)
+        # --- Блок: популярные конверсии (топ-10) ---
+        pop = ttk.LabelFrame(tab6, text="Популярные конверсии (топ-10)", padding=(10, 6))
+        pop.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        pop.columnconfigure(0, weight=1)
+        pop_text = (
+            "1.  PDF → Word\n"
+            "2.  Word → PDF\n"
+            "3.  JPG/PNG → PDF\n"
+            "4.  PNG ↔ JPG (изображения)\n"
+            "5.  HTML → PDF\n"
+            "6.  CSV → Excel\n"
+            "7.  Excel → CSV\n"
+            "8.  TXT → PDF / Word\n"
+            "9.  Markdown → HTML / PDF\n"
+            "10. PDF → TXT (извлечение текста)"
+        )
+        ttk.Label(pop, text=pop_text, justify="left").grid(
+            row=0, column=0, sticky="w")
 
-        ttk.Label(top_frame, text="Папка:").grid(
-            row=0, column=0, sticky="e", padx=(0, 8), pady=(0, 6))
-        self.top10_folder_entry = ttk.Entry(top_frame, textvariable=self.top10_folder_var)
-        self.top10_folder_entry.grid(row=0, column=1, sticky="ew", pady=(0, 6))
-        ttk.Button(
-            top_frame, text="Выбрать папку", command=self._top10_select_folder,
-            style="Neutral.TButton",
-        ).grid(row=0, column=2, padx=(8, 0), pady=(0, 6))
-        ttk.Button(
-            top_frame, text="Посчитать топ-10", command=self._top10_run,
-            style="Accent.TButton",
-        ).grid(row=0, column=3, padx=(8, 0), pady=(0, 6))
-
-        # таблица топ-10
-        columns = ("ext", "count", "pct")
-        top_tree = ttk.Treeview(top_frame, columns=columns, show="headings", height=10)
-        top_tree.heading("ext", text="Расширение")
-        top_tree.heading("count", text="Файлов")
-        top_tree.heading("pct", text="Доля")
-        top_tree.column("ext", width=160, anchor="w")
-        top_tree.column("count", width=100, anchor="center")
-        top_tree.column("pct", width=100, anchor="center")
-        top_tree.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(4, 0))
-        self.top10_tree = top_tree
-
-        ttk.Label(top_frame, textvariable=self.top10_status_var).grid(
-            row=2, column=0, columnspan=4, sticky="w", pady=(6, 0))
-
-        # --- Блок 2: универсальный конвертер файлов ---
-        conv_frame = ttk.LabelFrame(tab6, text="Конвертер файлов", padding=(10, 6))
+        # --- Блок: простой конвертер ---
+        conv_frame = ttk.LabelFrame(tab6, text="Конвертация файла", padding=(10, 6))
         conv_frame.grid(row=1, column=0, sticky="nsew")
         conv_frame.columnconfigure(1, weight=1)
 
@@ -1516,34 +1528,25 @@ class ConverterGui:
             style="Neutral.TButton",
         ).grid(row=0, column=2, padx=(8, 0), pady=(0, 6))
 
-        ttk.Label(conv_frame, text="Из формата:").grid(
+        ttk.Label(conv_frame, text="Конвертировать в:").grid(
             row=1, column=0, sticky="e", padx=(0, 8), pady=(0, 6))
-        self.top10_convert_from_combo = ttk.Combobox(
-            conv_frame, textvariable=self.top10_convert_from_var,
-            state="readonly", width=20, values=("PDF", "Word (.docx)", "HTML", "TXT",
-                                                "Markdown (.md)", "CSV", "Excel (.xlsx)"),
-        )
-        self.top10_convert_from_combo.grid(row=1, column=1, sticky="w", pady=(0, 6))
-        self.top10_convert_from_combo.bind("<<ComboboxSelected>>",
-                                           self._top10_on_from_change)
-
-        ttk.Label(conv_frame, text="В формат:").grid(
-            row=2, column=0, sticky="e", padx=(0, 8), pady=(0, 6))
         self.top10_convert_to_combo = ttk.Combobox(
             conv_frame, textvariable=self.top10_convert_to_var,
-            state="readonly", width=20, values=("Word (.docx)",),
+            state="readonly", width=22,
+            values=("Word (.docx)", "PDF (.pdf)", "TXT (.txt)", "HTML (.html)",
+                    "Excel (.xlsx)", "CSV (.csv)", "PNG (.png)", "JPG (.jpg)"),
         )
-        self.top10_convert_to_combo.grid(row=2, column=1, sticky="w", pady=(0, 6))
+        self.top10_convert_to_combo.grid(row=1, column=1, sticky="w", pady=(0, 6))
         ttk.Button(
             conv_frame, text="Конвертировать", command=self._top10_convert,
             style="Accent.TButton",
-        ).grid(row=2, column=2, padx=(8, 0), pady=(0, 6))
+        ).grid(row=1, column=2, padx=(8, 0), pady=(0, 6))
 
         ttk.Label(
             conv_frame,
-            text="Поддерживаемые конверсии: PDF⇄Word, PDF→TXT, Word→PDF, HTML→PDF/Word,\n"
-                 "Markdown→HTML/PDF, TXT→PDF/Word, CSV⇄Excel. Результат сохраняется рядом с исходным файлом.",
-        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
+            text="Выберите файл, укажите целевой формат и нажмите «Конвертировать».\n"
+                 "Результат сохраняется рядом с исходным файлом.",
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
         # --- Вкладка Журнал: всегда добавляется ПОСЛЕДНЕЙ, чтобы она была
         #     самой правой в ленте независимо от количества вкладок. ---
@@ -3930,76 +3933,46 @@ class ConverterGui:
             self.source_var.set(str(path))
             self.combined_output_var.set(str(default_combined_output_path(path)))
 
-    def _top10_select_folder(self) -> None:
-        selected = filedialog.askdirectory(title="Выберите папку для топ-10 расширений")
-        if selected:
-            self.top10_folder_var.set(selected)
-            self._top10_run()
-
-    def _top10_run(self) -> None:
-        """Считает топ-10 самых частых расширений файлов в выбранной папке."""
-        folder = self.top10_folder_var.get().strip()
-        if not folder or not Path(folder).is_dir():
-            self.top10_status_var.set("Выберите существующую папку.")
-            return
-        try:
-            counts: dict[str, int] = {}
-            for p in Path(folder).rglob("*"):
-                if p.is_file() and p.suffix:
-                    ext = p.suffix.lower()
-                    counts[ext] = counts.get(ext, 0) + 1
-            if not counts:
-                self.top10_status_var.set("В папке нет файлов с расширениями.")
-                # очищаем таблицу
-                if hasattr(self, "top10_tree"):
-                    for item in self.top10_tree.get_children():
-                        self.top10_tree.delete(item)
-                return
-            total = sum(counts.values())
-            top = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
-            # очищаем и заполняем таблицу
-            if hasattr(self, "top10_tree"):
-                for item in self.top10_tree.get_children():
-                    self.top10_tree.delete(item)
-                for ext, cnt in top:
-                    pct = 100.0 * cnt / total
-                    self.top10_tree.insert("", "end", values=(ext, cnt, f"{pct:.1f}%"))
-            self.top10_status_var.set(
-                f"Файлов всего: {total}, расширений: {len(counts)}. Показаны 10 самых частых."
-            )
-        except Exception as exc:
-            self.top10_status_var.set("Ошибка: " + str(exc))
-
-    def _top10_on_from_change(self, _event: object = None) -> None:
-        """При смене «из формата» обновляем список доступных «в формат»."""
-        frm = self.top10_convert_from_var.get()
-        to_options = {
-            "PDF": ["Word (.docx)", "TXT (.txt)"],
-            "Word (.docx)": ["PDF (.pdf)"],
-            "HTML": ["PDF (.pdf)", "Word (.docx)"],
-            "TXT": ["PDF (.pdf)", "Word (.docx)"],
-            "Markdown (.md)": ["HTML (.html)", "PDF (.pdf)"],
-            "CSV": ["Excel (.xlsx)"],
-            "Excel (.xlsx)": ["CSV (.csv)"],
-        }.get(frm, ["Word (.docx)"])
-        self.top10_convert_to_combo.configure(values=to_options)
-        if to_options:
-            self.top10_convert_to_var.set(to_options[0])
-
     def _top10_select_file(self) -> None:
         selected = filedialog.askopenfilename(title="Выберите файл для конвертации")
         if selected:
             self.top10_file_var.set(selected)
 
     def _top10_convert(self) -> None:
-        """Конвертирует выбранный файл из одного формата в другой (локально)."""
+        """Конвертирует выбранный файл в указанный формат (как простой конвертер).
+        Исходный формат определяется по расширению файла."""
         src = self.top10_file_var.get().strip()
         if not src or not Path(src).is_file():
             messagebox.showwarning("Конвертер", "Выберите файл для конвертации.")
             return
         src_path = Path(src)
-        frm = self.top10_convert_from_var.get()
         to = self.top10_convert_to_var.get()
+        ext = src_path.suffix.lower()
+        frm = None
+        frm_map = {
+            ".pdf": "PDF",
+            ".docx": "Word (.docx)",
+            ".doc": "Word (.docx)",
+            ".html": "HTML",
+            ".htm": "HTML",
+            ".txt": "TXT",
+            ".md": "Markdown (.md)",
+            ".markdown": "Markdown (.md)",
+            ".csv": "CSV",
+            ".xlsx": "Excel (.xlsx)",
+            ".xls": "Excel (.xlsx)",
+            ".png": "PNG",
+            ".jpg": "JPG",
+            ".jpeg": "JPG",
+        }
+        frm = frm_map.get(ext)
+        if frm is None:
+            messagebox.showwarning(
+                "Конвертер", f"Расширение «{ext}» не поддерживается для конвертации.")
+            return
+        if to == self._top10_default_to(frm):
+            messagebox.showinfo("Конвертер", "Исходный и целевой формат совпадают.")
+            return
 
         # расширение результата по выбранному «в формат»
         ext_map = {
@@ -4009,6 +3982,8 @@ class ConverterGui:
             "HTML (.html)": ".html",
             "Excel (.xlsx)": ".xlsx",
             "CSV (.csv)": ".csv",
+            "PNG (.png)": ".png",
+            "JPG (.jpg)": ".jpg",
         }
         target_ext = ext_map.get(to, ".out")
         target = src_path.with_suffix(target_ext)
@@ -4021,6 +3996,22 @@ class ConverterGui:
         except Exception as exc:
             self.top10_status_var.set("Ошибка конвертации: " + str(exc))
             messagebox.showerror("Конвертер", f"Ошибка: {exc}")
+
+    def _top10_default_to(self, frm: str) -> str:
+        """Возвращает format-этикетку, соответствующую формату frm ('in' эквивалент).
+        Нужно, чтобы не давать конвертировать формат сам в себя."""
+        mapping = {
+            "PDF": "PDF (.pdf)",
+            "Word (.docx)": "Word (.docx)",
+            "HTML": "HTML (.html)",
+            "TXT": "TXT (.txt)",
+            "Markdown (.md)": "TXT (.txt)",
+            "CSV": "CSV (.csv)",
+            "Excel (.xlsx)": "Excel (.xlsx)",
+            "PNG": "PNG (.png)",
+            "JPG": "JPG (.jpg)",
+        }
+        return mapping.get(frm, "")
 
     def _convert_impl(self, frm: str, to: str, src_path: Path, target: Path) -> None:
         """Выполняет конкретную конверсию. Вызывает исключение при ошибке."""
@@ -4129,6 +4120,19 @@ class ConverterGui:
                 for row in ws.iter_rows(values_only=True):
                     writer.writerow(row)
             wb.close()
+        elif frm in ("PNG", "JPG") and to in ("PNG (.png)", "JPG (.jpg)"):
+            # перекодирование изображения (PNG ↔ JPG)
+            from PIL import Image
+            img = Image.open(str(src_path))
+            if to == "JPG (.jpg)":
+                img = img.convert("RGB")
+                img.save(str(target), "JPEG", quality=90)
+            else:
+                img.save(str(target), "PNG")
+        elif frm in ("PNG", "JPG") and to == "PDF (.pdf)":
+            from PIL import Image
+            img = Image.open(str(src_path)).convert("RGB")
+            img.save(str(target), "PDF", resolution=150.0)
         else:
             raise RuntimeError(f"Конверсия {frm} → {to} пока не поддерживается.")
 

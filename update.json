@@ -1,5 +1,5 @@
 {
-  "version": "1.8.38",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.38/DMTools.exe",
-  "notes": "Вкладка конвертера расширена: выбор «из формата → в формат» (PDF⇄Word, PDF→TXT, HTML→PDF/Word, Markdown→HTML/PDF, TXT→PDF/Word, CSV⇄Excel). Журнал всегда размещается последней вкладкой."
+  "version": "1.8.39",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.39/DMTools.exe",
+  "notes": "Конвертер переделан в простой вид «как в интернете»: выбрать файл → выбрать формат на выходе → конвертировать. Добавлены конверсии изображений (PNG↔JPG, изображение→PDF). Обновление теперь не спрашивает ОК — уведомляет баннером и скачивает новую версию автоматически."
 }
