@@ -4134,6 +4134,36 @@ class ConverterGui:
             from PIL import Image
             img = Image.open(str(src_path)).convert("RGB")
             img.save(str(target), "PDF", resolution=150.0)
+        elif frm == "PDF" and to == "Excel (.xlsx)":
+            # PDF -> Excel: извлекаем таблицы из всех страниц в листы книги
+            import openpyxl
+            wb = openpyxl.Workbook()
+            wb.remove(wb.active)  # убираем лист по умолчанию
+            page_no = 0
+            with fitz.open(str(src_path)) as pdf:
+                for page in pdf:
+                    page_no += 1
+                    tables = page.find_tables()
+                    if not tables.tables:
+                        # нет таблиц — сохраняем просто текст страницы
+                        ws = wb.create_sheet(title=f"Стр. {page_no}")
+                        text = page.get_text("text").strip()
+                        if text:
+                            for i, line in enumerate(text.splitlines(), start=1):
+                                ws.cell(row=i, column=1, value=line)
+                        continue
+                    for t_idx, table in enumerate(tables.tables, start=1):
+                        ws = wb.create_sheet(title=f"Стр. {page_no}.{t_idx}")
+                        data = table.extract()
+                        if not data:
+                            continue
+                        for r, row in enumerate(data, start=1):
+                            for c, val in enumerate(row, start=1):
+                                # ячейки могут быть None
+                                ws.cell(row=r, column=c, value=val if val is not None else "")
+            if not wb.sheetnames:
+                wb.create_sheet(title="Лист 1")
+            wb.save(str(target))
         else:
             raise RuntimeError(f"Конверсия {frm} → {to} пока не поддерживается.")
 
