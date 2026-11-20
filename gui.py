@@ -4200,16 +4200,25 @@ class ConverterGui:
                         continue
                     for t_idx, table in enumerate(tables.tables, start=1):
                         ws = wb.create_sheet(title=f"Стр. {page_no}.{t_idx}")
-                        data = table.extract()
-                        if not data:
-                            continue
+                        # Пересобираем сетку таблицы сами: берём bbox каждой клетки
+                        # и текст в нём через _table_cell_text (фильтрует наложенный
+                        # скрытый текст). Ячейки без bbox (None) пропускаем.
+                        data = []
+                        for row_obj in table.rows:
+                            row_vals = []
+                            for bbox in row_obj.cells:
+                                if bbox is None:
+                                    row_vals.append("")
+                                    continue
+                                row_vals.append(self._table_cell_text(page, bbox))
+                            data.append(row_vals)
                         # Структура таблицы уже определена find_tables(): пишем её
                         # плотно, строка за строкой, начиная с A1, чтобы колонки и
                         # строки стояли рядом, как в PDF. Рамки сохраняем по каждой
                         # заполненной ячейке.
                         for ri, row_vals in enumerate(data):
                             for ci, val in enumerate(row_vals):
-                                if val is None:
+                                if val is None or not str(val).strip():
                                     continue
                                 cell = ws.cell(row=ri + 1, column=ci + 1, value=val)
                                 cell.border = border
@@ -4218,6 +4227,50 @@ class ConverterGui:
             wb.save(str(target))
         else:
             raise RuntimeError(f"Конверсия {frm} → {to} пока не поддерживается.")
+
+    @staticmethod
+    def _table_cell_text(page, cell_bbox) -> str:
+        """Собирает текст PDF-ячейки таблицы своими руками.
+
+        Используется вместо table.extract()/extract() ус-aggregated, потому что
+        extract() склеивает НАЛОЖЕННЫЕ тексты в PDF (скрытый слой поверх видимого)
+        посимвольно, давая мусор вида «Н1е2 .с0р5а...». Здесь мы берём линии
+        get_text("dict") внутри bbox ячейки и на каждой y-строке оставляем только
+        самую левую линию (с минимальным x0) — это отбрасывает скрытый дубль,
+        который обычно лежит правее и на той же высоте.
+        """
+        if page is None:
+            return ""
+        x0_c, y0_c, x1_c, y1_c = (float(v) for v in cell_bbox)
+        # собираем строки текста внутри ячейки
+        lines = []
+        for block in page.get_text("dict").get("blocks", []):
+            if block.get("type") != 0:
+                continue
+            for line in block.get("lines", []):
+                bx0, by0, bx1, by1 = line.get("bbox", [0, 0, 0, 0])
+                # линия пересекает ячейку по горизонтали и полностью внутри по вертикали
+                if bx0 >= x1_c or bx1 <= x0_c or by1 <= y0_c or by0 >= y1_c:
+                    continue
+                # вертикальный центр линии должен быть в пределах ячейки
+                cy = (by0 + by1) / 2
+                if not (y0_c <= cy <= y1_c):
+                    continue
+                text = "".join(span.get("text", "") for span in line.get("spans", []))
+                if text.strip():
+                    lines.append((bx0, cy, text))
+        if not lines:
+            return ""
+        # группируем в y-строки и берём самую левую линию в каждой
+        from collections import defaultdict
+        rows = defaultdict(list)
+        for bx, cy, text in lines:
+            rows[round(cy)].append((bx, text))
+        parts = []
+        for cy in sorted(rows):
+            best = min(rows[cy], key=lambda z: z[0])
+            parts.append(best[1])
+        return "\n".join(parts)
 
     def _select_output_file(self) -> None:
         current_text = self.combined_output_var.get().strip()
