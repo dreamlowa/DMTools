@@ -234,7 +234,7 @@ class ConverterGui:
         self.top10_folder_var = tk.StringVar()
         self.top10_status_var = tk.StringVar(value="Выберите папку, чтобы увидеть топ-10 расширений")
         self.top10_file_var = tk.StringVar()
-        self.top10_convert_from_var = tk.StringVar(value="PDF")
+        self.top10_convert_from_var = tk.StringVar(value="PDF (.pdf)")
         self.top10_convert_to_var = tk.StringVar(value="Word (.docx)")
         self._profiles: dict[str, dict] = {}
         self._last_generated_pdf: str | None = None
@@ -1528,25 +1528,36 @@ class ConverterGui:
             style="Neutral.TButton",
         ).grid(row=0, column=2, padx=(8, 0), pady=(0, 6))
 
-        ttk.Label(conv_frame, text="Конвертировать в:").grid(
+        ttk.Label(conv_frame, text="Из формата:").grid(
             row=1, column=0, sticky="e", padx=(0, 8), pady=(0, 6))
+        self.top10_convert_from_combo = ttk.Combobox(
+            conv_frame, textvariable=self.top10_convert_from_var,
+            state="readonly", width=22,
+            values=("PDF (.pdf)", "Word (.docx)", "HTML (.html)", "TXT (.txt)",
+                    "Markdown (.md)", "CSV (.csv)", "Excel (.xlsx)", "PNG (.png)",
+                    "JPG (.jpg)"),
+        )
+        self.top10_convert_from_combo.grid(row=1, column=1, sticky="w", pady=(0, 6))
+
+        ttk.Label(conv_frame, text="В формат:").grid(
+            row=2, column=0, sticky="e", padx=(0, 8), pady=(0, 6))
         self.top10_convert_to_combo = ttk.Combobox(
             conv_frame, textvariable=self.top10_convert_to_var,
             state="readonly", width=22,
             values=("Word (.docx)", "PDF (.pdf)", "TXT (.txt)", "HTML (.html)",
                     "Excel (.xlsx)", "CSV (.csv)", "PNG (.png)", "JPG (.jpg)"),
         )
-        self.top10_convert_to_combo.grid(row=1, column=1, sticky="w", pady=(0, 6))
+        self.top10_convert_to_combo.grid(row=2, column=1, sticky="w", pady=(0, 6))
         ttk.Button(
             conv_frame, text="Конвертировать", command=self._top10_convert,
             style="Accent.TButton",
-        ).grid(row=1, column=2, padx=(8, 0), pady=(0, 6))
+        ).grid(row=2, column=2, padx=(8, 0), pady=(0, 6))
 
         ttk.Label(
             conv_frame,
-            text="Выберите файл, укажите целевой формат и нажмите «Конвертировать».\n"
+            text="Выберите исходный формат, целевой формат, файл и нажмите «Конвертировать».\n"
                  "Результат сохраняется рядом с исходным файлом.",
-        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
         # --- Вкладка Журнал: всегда добавляется ПОСЛЕДНЕЙ, чтобы она была
         #     самой правой в ленте независимо от количества вкладок. ---
@@ -3939,38 +3950,40 @@ class ConverterGui:
             self.top10_file_var.set(selected)
 
     def _top10_convert(self) -> None:
-        """Конвертирует выбранный файл в указанный формат (как простой конвертер).
-        Исходный формат определяется по расширению файла."""
+        """Конвертирует выбранный файл из выбранного формата в указанный формат
+        (как простой конвертер). Форматы выбираются пользователем в выпадающих списках."""
         src = self.top10_file_var.get().strip()
         if not src or not Path(src).is_file():
             messagebox.showwarning("Конвертер", "Выберите файл для конвертации.")
             return
         src_path = Path(src)
+        # формат берём из выпадающего списка «Из формата»
+        frm_label = self.top10_convert_from_var.get()
         to = self.top10_convert_to_var.get()
-        ext = src_path.suffix.lower()
-        frm = None
+
+        # расширение исходного файла должно соответствовать выбранному формату
+        src_ext = src_path.suffix.lower()
         frm_map = {
-            ".pdf": "PDF",
-            ".docx": "Word (.docx)",
-            ".doc": "Word (.docx)",
-            ".html": "HTML",
-            ".htm": "HTML",
-            ".txt": "TXT",
-            ".md": "Markdown (.md)",
-            ".markdown": "Markdown (.md)",
-            ".csv": "CSV",
-            ".xlsx": "Excel (.xlsx)",
-            ".xls": "Excel (.xlsx)",
-            ".png": "PNG",
-            ".jpg": "JPG",
-            ".jpeg": "JPG",
+            "PDF (.pdf)": ".pdf",
+            "Word (.docx)": ".docx",
+            "HTML (.html)": ".html",
+            "TXT (.txt)": ".txt",
+            "Markdown (.md)": ".md",
+            "CSV (.csv)": ".csv",
+            "Excel (.xlsx)": ".xlsx",
+            "PNG (.png)": ".png",
+            "JPG (.jpg)": ".jpg",
         }
-        frm = frm_map.get(ext)
-        if frm is None:
+        expected_ext = frm_map.get(frm_label)
+        if expected_ext and src_ext != expected_ext and src_ext != ".doc" and src_ext != ".jpeg":
             messagebox.showwarning(
-                "Конвертер", f"Расширение «{ext}» не поддерживается для конвертации.")
+                "Конвертер",
+                f"Вы выбрали формат «{frm_label}», но у файла расширение «{src_ext}».\n"
+                "Выберите правильный формат в поле «Из формата».")
             return
-        if to == self._top10_default_to(frm):
+        frm = frm_label
+
+        if to == frm_label:
             messagebox.showinfo("Конвертер", "Исходный и целевой формат совпадают.")
             return
 
@@ -3997,25 +4010,13 @@ class ConverterGui:
             self.top10_status_var.set("Ошибка конвертации: " + str(exc))
             messagebox.showerror("Конвертер", f"Ошибка: {exc}")
 
-    def _top10_default_to(self, frm: str) -> str:
-        """Возвращает format-этикетку, соответствующую формату frm ('in' эквивалент).
-        Нужно, чтобы не давать конвертировать формат сам в себя."""
-        mapping = {
-            "PDF": "PDF (.pdf)",
-            "Word (.docx)": "Word (.docx)",
-            "HTML": "HTML (.html)",
-            "TXT": "TXT (.txt)",
-            "Markdown (.md)": "TXT (.txt)",
-            "CSV": "CSV (.csv)",
-            "Excel (.xlsx)": "Excel (.xlsx)",
-            "PNG": "PNG (.png)",
-            "JPG": "JPG (.jpg)",
-        }
-        return mapping.get(frm, "")
-
     def _convert_impl(self, frm: str, to: str, src_path: Path, target: Path) -> None:
         """Выполняет конкретную конверсию. Вызывает исключение при ошибке."""
         import fitz  # PyMuPDF
+
+        # нормализуем метки формата: "PDF (.pdf)" -> "PDF", чтобы проверки ниже работали
+        norm_frm = frm.split(" ")[0] if frm else frm
+        frm = norm_frm
 
         if frm == "PDF" and to == "Word (.docx)":
             from docx import Document
@@ -4032,7 +4033,7 @@ class ConverterGui:
             with fitz.open(str(src_path)) as pdf:
                 text = "\n".join(page.get_text("text") for page in pdf)
             target.write_text(text, encoding="utf-8")
-        elif frm == "Word (.docx)" and to == "PDF (.pdf)":
+        elif frm == "Word" and to == "PDF (.pdf)":
             # Word -> PDF: извлекаем текст из абзацев и строим PDF через PyMuPDF
             from docx import Document as D
             doc = D(str(src_path))
@@ -4088,11 +4089,11 @@ class ConverterGui:
             for line in src_path.read_text(encoding="utf-8", errors="replace").splitlines():
                 doc.add_paragraph(line)
             doc.save(str(target))
-        elif frm == "Markdown (.md)" and to == "HTML (.html)":
+        elif frm == "Markdown" and to == "HTML (.html)":
             import markdown as md
             html = md.markdown(src_path.read_text(encoding="utf-8", errors="replace"))
             target.write_text(html, encoding="utf-8")
-        elif frm == "Markdown (.md)" and to == "PDF (.pdf)":
+        elif frm == "Markdown" and to == "PDF (.pdf)":
             import markdown as md
             html = "<html><body>" + md.markdown(
                 src_path.read_text(encoding="utf-8", errors="replace")) + "</body></html>"
@@ -4110,7 +4111,7 @@ class ConverterGui:
                 for row in csv.reader(f):
                     ws.append(row)
             wb.save(str(target))
-        elif frm == "Excel (.xlsx)" and to == "CSV (.csv)":
+        elif frm == "Excel" and to == "CSV (.csv)":
             import csv
             import openpyxl
             wb = openpyxl.load_workbook(str(src_path), read_only=True)
