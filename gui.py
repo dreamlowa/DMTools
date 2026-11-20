@@ -4018,10 +4018,21 @@ class ConverterGui:
         }
         target_ext = ext_map.get(to, ".out")
         target = src_path.with_suffix(target_ext)
+        # Если файл с таким именем уже существует — создаём копию с номером
+        # по порядку (имя_1.xlsx, имя_2.xlsx, ...), не перезаписывая и не
+        # блокируясь на уже открытом файле.
+        existing_target = target
+        n = 1
+        while target.exists():
+            target = existing_target.with_stem(f"{existing_target.stem}_{n}")
+            n += 1
+        saved_label = target.name
+        if target != existing_target:
+            saved_label = f"{target.name} (файл уже был)"
         try:
             self._convert_impl(frm, to, src_path, target)
             self.top10_status_var.set(
-                f"Готово: {target.name} (рядом с исходным файлом)"
+                f"Готово: {saved_label} (рядом с исходным файлом)"
             )
             messagebox.showinfo("Конвертер", f"Создан файл:\n{target}")
         except Exception as exc:
