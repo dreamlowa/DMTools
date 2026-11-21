@@ -242,6 +242,12 @@ class ConverterGui:
         self.quick_code_var = tk.StringVar()
         self.quick_status_var = tk.StringVar(value="Вставьте код маркировки и нажмите «Проверить»")
         self._quick_image_ref: object | None = None
+        # --- Вкладка «Топ-10» (расширения + универсальный конвертер) ---
+        self.top10_folder_var = tk.StringVar()
+        self.top10_status_var = tk.StringVar(value="Выберите папку, чтобы увидеть топ-10 расширений")
+        self.top10_file_var = tk.StringVar()
+        self.top10_convert_from_var = tk.StringVar(value="PDF (.pdf)")
+        self.top10_convert_to_var = tk.StringVar(value="Word (.docx)")
         self._profiles: dict[str, dict] = {}
         self._last_generated_pdf: str | None = None
         self._last_generated_pages: int = 0
@@ -249,7 +255,7 @@ class ConverterGui:
 
         # видимость вкладок (галочки в меню «Вид»)
         self._tab_order = ["PDF → CSV", "CSV → DataMatrix",
-                           "Быстрый DataMatrix", "Журнал"]
+                           "Быстрый DataMatrix", "Топ-10", "Журнал"]
         self._tab_visible = {name: tk.BooleanVar(value=True)
                              for name in self._tab_order}
         # рамки-держатели подписей ошибок дат — фон обновляется вместе с темой
@@ -322,6 +328,9 @@ class ConverterGui:
         view_menu.add_checkbutton(
             label="Журнал", variable=self._tab_visible["Журнал"],
             command=lambda: self._toggle_tab("Журнал"))
+        view_menu.add_checkbutton(
+            label="Топ-10", variable=self._tab_visible["Топ-10"],
+            command=lambda: self._toggle_tab("Топ-10"))
         menubar.add_cascade(label="Вид", menu=view_menu)
 
         scanner_menu = tk.Menu(menubar, tearoff=0)
@@ -443,27 +452,56 @@ class ConverterGui:
         threading.Thread(target=work, daemon=True).start()
 
     def _ask_update(self, update: dict) -> None:
-        """Спрашивает пользователя, обновляться ли. При согласии — запускает обновление."""
-        notes = (update.get("notes") or "").strip()
-        msg = (f"Доступна новая версия v{update.get('version')}.\n"
-               f"Текущая версия: v{APP_VERSION}\n")
-        if notes:
-            msg += f"\nЧто нового:\n{notes}\n"
-        msg += "\nСкачать и установить обновление сейчас?"
-        if not messagebox.askyesno("Обновление программы", msg):
+        """Спрашивает пользователя, обновить ли программу. Только после
+        подтверждения запускает загрузку новой версии."""
+        version = update.get("version", "?")
+        notes = update.get("notes")
+        text = (f"Доступна новая версия v{version}."
+                + (f"\n\nЧто нового:\n{notes}" if notes else "")
+                + "\n\nОбновить программу?")
+        answer = messagebox.askyesno("Обновление", text)
+        if not answer:
             return
         err = run_self_update(update["url"])
         if err:
             messagebox.showerror("Обновление", err)
-        else:
-            messagebox.showinfo(
-                "Обновление",
-                "Обновление запущено. Программа закроется, загрузит новую "
-                "версию и откроется автоматически.")
-            try:
-                self.root.destroy()
-            except Exception:
-                pass
+            return
+        # закрываем окно через небольшую паузу, чтобы сообщение успело отобразиться
+        self.root.after(600, self._close_for_update)
+
+    def _close_for_update(self) -> None:
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+
+    def _show_toast(self, message: str) -> None:
+        """Показывает авто-скрывающийся баннер-уведомление в правом нижнем углу."""
+        try:
+            toast = tk.Toplevel(self.root)
+            toast.overrideredirect(True)
+            toast.attributes("-topmost", True)
+            # тёмный фон с белым текстом, чтобы было видно на любом экране
+            toast.configure(bg="#2C2C2C")
+            label = tk.Label(
+                toast, text=message, bg="#2C2C2C", fg="#FFFFFF",
+                font=("Segoe UI", 10), justify="left",
+                padx=14, pady=12,
+            )
+            label.pack()
+            toast.update_idletasks()
+            w = toast.winfo_reqwidth()
+            h = toast.winfo_reqheight()
+            # размещаем в правом нижнем углу экрана
+            screen_w = toast.winfo_screenwidth()
+            screen_h = toast.winfo_screenheight()
+            x = screen_w - w - 20
+            y = screen_h - h - 60
+            toast.geometry(f"+{x}+{y}")
+            # закрываем через 5 секунд
+            toast.after(5000, lambda: toast.destroy())
+        except Exception:
+            pass
 
     def _enable_copy_menus(self) -> None:
         """Добавляет контекстное меню «Копировать»/«Выбрать всё», Ctrl+C и
@@ -1507,7 +1545,82 @@ class ConverterGui:
         )
         self.quick_preview_canvas.grid(row=3, column=0, sticky="nsew")
 
-        # --- Вкладка 5: Журнал (общий лог событий программы, как в 1С) ---
+        # --- Вкладка 6: Конвертер файлов ---
+        tab6 = ttk.Frame(self.notebook, padding=12)
+        self.notebook.add(tab6, text="Конвертер")
+        tab6.columnconfigure(0, weight=1)
+        tab6.rowconfigure(1, weight=1)
+
+        # --- Блок: популярные конверсии (топ-10) ---
+        pop = ttk.LabelFrame(tab6, text="Популярные конверсии (топ-10)", padding=(10, 6))
+        pop.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        pop.columnconfigure(0, weight=1)
+        pop_text = (
+            "1.  PDF → Word\n"
+            "2.  Word → PDF\n"
+            "3.  JPG/PNG → PDF\n"
+            "4.  PNG ↔ JPG (изображения)\n"
+            "5.  HTML → PDF\n"
+            "6.  CSV → Excel\n"
+            "7.  Excel → CSV\n"
+            "8.  TXT → PDF / Word\n"
+            "9.  Markdown → HTML / PDF\n"
+            "10. PDF → TXT (извлечение текста)"
+        )
+        ttk.Label(pop, text=pop_text, justify="left").grid(
+            row=0, column=0, sticky="w")
+
+        # --- Блок: простой конвертер ---
+        conv_frame = ttk.LabelFrame(tab6, text="Конвертация файла", padding=(10, 6))
+        conv_frame.grid(row=1, column=0, sticky="nsew")
+        conv_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(conv_frame, text="Файл:").grid(
+            row=0, column=0, sticky="e", padx=(0, 8), pady=(0, 6))
+        self.top10_file_entry = ttk.Entry(conv_frame, textvariable=self.top10_file_var)
+        self.top10_file_entry.grid(row=0, column=1, sticky="ew", pady=(0, 6))
+        ttk.Button(
+            conv_frame, text="Выбрать файл", command=self._top10_select_file,
+            style="Neutral.TButton",
+        ).grid(row=0, column=2, padx=(8, 0), pady=(0, 6))
+
+        ttk.Label(conv_frame, text="Из формата:").grid(
+            row=1, column=0, sticky="e", padx=(0, 8), pady=(0, 6))
+        self.top10_convert_from_combo = ttk.Combobox(
+            conv_frame, textvariable=self.top10_convert_from_var,
+            state="readonly", width=22,
+            values=("PDF (.pdf)", "Word (.docx)", "HTML (.html)", "TXT (.txt)",
+                    "Markdown (.md)", "CSV (.csv)", "Excel (.xlsx)", "PNG (.png)",
+                    "JPG (.jpg)"),
+        )
+        self.top10_convert_from_combo.grid(row=1, column=1, sticky="w", pady=(0, 6))
+
+        ttk.Label(conv_frame, text="В формат:").grid(
+            row=2, column=0, sticky="e", padx=(0, 8), pady=(0, 6))
+        self.top10_convert_to_combo = ttk.Combobox(
+            conv_frame, textvariable=self.top10_convert_to_var,
+            state="readonly", width=22,
+            values=("Word (.docx)", "PDF (.pdf)", "TXT (.txt)", "HTML (.html)",
+                    "Excel (.xlsx)", "CSV (.csv)", "PNG (.png)", "JPG (.jpg)"),
+        )
+        self.top10_convert_to_combo.grid(row=2, column=1, sticky="w", pady=(0, 6))
+        ttk.Button(
+            conv_frame, text="Конвертировать", command=self._top10_convert,
+            style="Accent.TButton",
+        ).grid(row=2, column=2, padx=(8, 0), pady=(0, 6))
+
+        ttk.Label(
+            conv_frame,
+            text="Выберите исходный формат, целевой формат, файл и нажмите «Конвертировать».\n"
+                 "Результат сохраняется рядом с исходным файлом.",
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Button(
+            conv_frame, text="Открыть папку", command=self._top10_open_folder,
+            style="Neutral.TButton",
+        ).grid(row=3, column=2, padx=(8, 0), pady=(6, 0))
+
+        # --- Вкладка Журнал: всегда добавляется ПОСЛЕДНЕЙ, чтобы она была
+        #     самой правой в ленте независимо от количества вкладок. ---
         tab5 = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(tab5, text="Журнал")
         tab5.columnconfigure(0, weight=1)
@@ -3196,6 +3309,18 @@ class ConverterGui:
 
         def _on_tab_release(_event) -> None:
             self._drag_tab_index = None
+            # «Журнал» всегда должен оставаться ПОСЛЕДНЕЙ вкладкой, даже после
+            # перетаскивания — возвращаем её в самый конец.
+            try:
+                tabs = self.notebook.tabs()
+                if len(tabs) > 1:
+                    # ищем вкладку «Журнал» по тексту
+                    for i, tid in enumerate(tabs):
+                        if self.notebook.tab(tid, "text") == "Журнал" and i != len(tabs) - 1:
+                            self.notebook.insert("end", tid)
+                            break
+            except Exception:
+                pass
 
         self.notebook.bind("<Button-1>", _on_tab_press, add="+")
         self.notebook.bind("<B1-Motion>", _on_tab_motion, add="+")
@@ -3977,6 +4102,328 @@ class ConverterGui:
             self._remember_dir(str(path))
             self.source_var.set(str(path))
             self.combined_output_var.set(str(default_combined_output_path(path)))
+
+    def _top10_select_file(self) -> None:
+        selected = filedialog.askopenfilename(title="Выберите файл для конвертации")
+        if selected:
+            self.top10_file_var.set(selected)
+
+    def _top10_open_folder(self) -> None:
+        """Открывает папку, где лежит выбранный файл (рядом с ним сохраняется результат)."""
+        src = self.top10_file_var.get().strip()
+        folder = str(Path(src).parent) if src and Path(src).parent.exists() else None
+        if not folder:
+            messagebox.showinfo("Открыть папку", "Сначала выберите файл для конвертации.")
+            return
+        try:
+            os.startfile(folder)  # type: ignore[attr-defined]
+        except OSError:
+            messagebox.showerror("Открыть папку", f"Не удалось открыть папку:\n{folder}")
+
+    def _top10_convert(self) -> None:
+        """Конвертирует выбранный файл из выбранного формата в указанный формат
+        (как простой конвертер). Форматы выбираются пользователем в выпадающих списках."""
+        src = self.top10_file_var.get().strip()
+        if not src or not Path(src).is_file():
+            messagebox.showwarning("Конвертер", "Выберите файл для конвертации.")
+            return
+        src_path = Path(src)
+        # формат берём из выпадающего списка «Из формата»
+        frm_label = self.top10_convert_from_var.get()
+        to = self.top10_convert_to_var.get()
+
+        # расширение исходного файла должно соответствовать выбранному формату
+        src_ext = src_path.suffix.lower()
+        frm_map = {
+            "PDF (.pdf)": ".pdf",
+            "Word (.docx)": ".docx",
+            "HTML (.html)": ".html",
+            "TXT (.txt)": ".txt",
+            "Markdown (.md)": ".md",
+            "CSV (.csv)": ".csv",
+            "Excel (.xlsx)": ".xlsx",
+            "PNG (.png)": ".png",
+            "JPG (.jpg)": ".jpg",
+        }
+        expected_ext = frm_map.get(frm_label)
+        if expected_ext and src_ext != expected_ext and src_ext != ".doc" and src_ext != ".jpeg":
+            messagebox.showwarning(
+                "Конвертер",
+                f"Вы выбрали формат «{frm_label}», но у файла расширение «{src_ext}».\n"
+                "Выберите правильный формат в поле «Из формата».")
+            return
+        frm = frm_label
+
+        if to == frm_label:
+            messagebox.showinfo("Конвертер", "Исходный и целевой формат совпадают.")
+            return
+
+        # расширение результата по выбранному «в формат»
+        ext_map = {
+            "Word (.docx)": ".docx",
+            "PDF (.pdf)": ".pdf",
+            "TXT (.txt)": ".txt",
+            "HTML (.html)": ".html",
+            "Excel (.xlsx)": ".xlsx",
+            "CSV (.csv)": ".csv",
+            "PNG (.png)": ".png",
+            "JPG (.jpg)": ".jpg",
+        }
+        target_ext = ext_map.get(to, ".out")
+        target = src_path.with_suffix(target_ext)
+        # Если файл с таким именем уже существует — создаём копию с номером
+        # по порядку (имя_1.xlsx, имя_2.xlsx, ...), не перезаписывая и не
+        # блокируясь на уже открытом файле.
+        existing_target = target
+        n = 1
+        while target.exists():
+            target = existing_target.with_stem(f"{existing_target.stem}_{n}")
+            n += 1
+        saved_label = target.name
+        if target != existing_target:
+            saved_label = f"{target.name} (файл уже был)"
+        try:
+            self._convert_impl(frm, to, src_path, target)
+            self.top10_status_var.set(
+                f"Готово: {saved_label} (рядом с исходным файлом)"
+            )
+            messagebox.showinfo("Конвертер", f"Создан файл:\n{target}")
+        except Exception as exc:
+            self.top10_status_var.set("Ошибка конвертации: " + str(exc))
+            messagebox.showerror("Конвертер", f"Ошибка: {exc}")
+
+    def _convert_impl(self, frm: str, to: str, src_path: Path, target: Path) -> None:
+        """Выполняет конкретную конверсию. Вызывает исключение при ошибке."""
+        import fitz  # PyMuPDF
+
+        # нормализуем метки формата: "PDF (.pdf)" -> "PDF", чтобы проверки ниже работали
+        norm_frm = frm.split(" ")[0] if frm else frm
+        frm = norm_frm
+
+        if frm == "PDF" and to == "Word (.docx)":
+            from docx import Document
+            doc = Document()
+            with fitz.open(str(src_path)) as pdf:
+                for page in pdf:
+                    text = page.get_text("text")
+                    if not text.strip():
+                        continue
+                    for line in text.splitlines():
+                        doc.add_paragraph(line)
+            doc.save(str(target))
+        elif frm == "PDF" and to == "TXT (.txt)":
+            with fitz.open(str(src_path)) as pdf:
+                text = "\n".join(page.get_text("text") for page in pdf)
+            target.write_text(text, encoding="utf-8")
+        elif frm == "Word" and to == "PDF (.pdf)":
+            # Word -> PDF: извлекаем текст из абзацев и строим PDF через PyMuPDF
+            from docx import Document as D
+            doc = D(str(src_path))
+            out = fitz.open()
+            page = out.new_page()
+            y = 50
+            for para in doc.paragraphs:
+                t = para.text.strip()
+                if not t:
+                    continue
+                page.insert_text((50, y), t, fontsize=11)
+                y += 18
+                if y > 790:
+                    page = out.new_page()
+                    y = 50
+            out.save(str(target))
+            out.close()
+        elif frm == "HTML" and to == "PDF (.pdf)":
+            html = src_path.read_text(encoding="utf-8", errors="replace")
+            out = fitz.open()
+            page = out.new_page()
+            page.insert_htmlbox(fitz.Rect(50, 50, 545, 800), html)
+            out.save(str(target))
+            out.close()
+        elif frm == "HTML" and to == "Word (.docx)":
+            from docx import Document as D
+            html = src_path.read_text(encoding="utf-8", errors="replace")
+            # примитивная конвертация: удаляем теги, остаётся текст по абзацам
+            import re
+            doc = D()
+            for block in re.split(r"<\s*p[^>]*>", html):
+                txt = re.sub(r"<[^>]+>", "", block)
+                txt = txt.replace("&nbsp;", " ").strip()
+                if txt:
+                    doc.add_paragraph(txt)
+            doc.save(str(target))
+        elif frm == "TXT" and to == "PDF (.pdf)":
+            text = src_path.read_text(encoding="utf-8", errors="replace")
+            out = fitz.open()
+            page = out.new_page()
+            y = 50
+            for line in text.splitlines():
+                page.insert_text((50, y), line, fontsize=11)
+                y += 18
+                if y > 790:
+                    page = out.new_page()
+                    y = 50
+            out.save(str(target))
+            out.close()
+        elif frm == "TXT" and to == "Word (.docx)":
+            from docx import Document as D
+            doc = D()
+            for line in src_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                doc.add_paragraph(line)
+            doc.save(str(target))
+        elif frm == "Markdown" and to == "HTML (.html)":
+            import markdown as md
+            html = md.markdown(src_path.read_text(encoding="utf-8", errors="replace"))
+            target.write_text(html, encoding="utf-8")
+        elif frm == "Markdown" and to == "PDF (.pdf)":
+            import markdown as md
+            html = "<html><body>" + md.markdown(
+                src_path.read_text(encoding="utf-8", errors="replace")) + "</body></html>"
+            out = fitz.open()
+            page = out.new_page()
+            page.insert_htmlbox(fitz.Rect(50, 50, 545, 800), html)
+            out.save(str(target))
+            out.close()
+        elif frm == "CSV" and to == "Excel (.xlsx)":
+            import csv
+            import openpyxl
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            with src_path.open("r", encoding="utf-8", errors="replace", newline="") as f:
+                for row in csv.reader(f):
+                    ws.append(row)
+            wb.save(str(target))
+        elif frm == "Excel" and to == "CSV (.csv)":
+            import csv
+            import openpyxl
+            wb = openpyxl.load_workbook(str(src_path), read_only=True)
+            ws = wb.active
+            with target.open("w", encoding="utf-8", newline="") as f:
+                writer = csv.writer(f)
+                for row in ws.iter_rows(values_only=True):
+                    writer.writerow(row)
+            wb.close()
+        elif frm in ("PNG", "JPG") and to in ("PNG (.png)", "JPG (.jpg)"):
+            # перекодирование изображения (PNG ↔ JPG)
+            from PIL import Image
+            img = Image.open(str(src_path))
+            if to == "JPG (.jpg)":
+                img = img.convert("RGB")
+                img.save(str(target), "JPEG", quality=90)
+            else:
+                img.save(str(target), "PNG")
+        elif frm in ("PNG", "JPG") and to == "PDF (.pdf)":
+            from PIL import Image
+            img = Image.open(str(src_path)).convert("RGB")
+            img.save(str(target), "PDF", resolution=150.0)
+        elif frm == "PDF" and to == "Excel (.xlsx)":
+            # PDF -> Excel: извлекаем таблицы с учётом координат ячеек (рамок и
+            # расположения) и размещаем их в листы книги.
+            import openpyxl
+            from openpyxl.styles import Border, Side
+            thin = Side(style="thin", color="000000")
+            border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+            wb = openpyxl.Workbook()
+            wb.remove(wb.active)  # убираем лист по умолчанию
+            page_no = 0
+            with fitz.open(str(src_path)) as pdf:
+                for page in pdf:
+                    page_no += 1
+                    page_w = page.rect.width
+                    page_h = page.rect.height
+                    tables = page.find_tables()
+                    if not tables.tables:
+                        # нет таблиц — сохраняем текст страницы с учётом расположения
+                        ws = wb.create_sheet(title=f"Стр. {page_no}")
+                        scale_x = 70
+                        scale_y = 32
+                        for block in page.get_text("dict")["blocks"]:
+                            if block.get("type") != 0:  # 0 = текст
+                                continue
+                            for line in block.get("lines", []):
+                                x0 = line.get("bbox", [0, 0, 0, 0])[0]
+                                y0 = line.get("bbox", [0, 0, 0, 0])[1]
+                                col = max(1, int(round(x0 / page_w * scale_x)) + 1)
+                                row = max(1, int(round(y0 / page_h * scale_y)) + 1)
+                                text = "".join(
+                                    span.get("text", "") for span in line.get("spans", []))
+                                if text.strip():
+                                    ws.cell(row=row, column=int(col), value=text)
+                        continue
+                    for t_idx, table in enumerate(tables.tables, start=1):
+                        ws = wb.create_sheet(title=f"Стр. {page_no}.{t_idx}")
+                        # Пересобираем сетку таблицы сами: берём bbox каждой клетки
+                        # и текст в нём через _table_cell_text (фильтрует наложенный
+                        # скрытый текст). Ячейки без bbox (None) пропускаем.
+                        data = []
+                        for row_obj in table.rows:
+                            row_vals = []
+                            for bbox in row_obj.cells:
+                                if bbox is None:
+                                    row_vals.append("")
+                                    continue
+                                row_vals.append(self._table_cell_text(page, bbox))
+                            data.append(row_vals)
+                        # Структура таблицы уже определена find_tables(): пишем её
+                        # плотно, строка за строкой, начиная с A1, чтобы колонки и
+                        # строки стояли рядом, как в PDF. Рамки сохраняем по каждой
+                        # заполненной ячейке.
+                        for ri, row_vals in enumerate(data):
+                            for ci, val in enumerate(row_vals):
+                                if val is None or not str(val).strip():
+                                    continue
+                                cell = ws.cell(row=ri + 1, column=ci + 1, value=val)
+                                cell.border = border
+            if not wb.sheetnames:
+                wb.create_sheet(title="Лист 1")
+            wb.save(str(target))
+        else:
+            raise RuntimeError(f"Конверсия {frm} → {to} пока не поддерживается.")
+
+    @staticmethod
+    def _table_cell_text(page, cell_bbox) -> str:
+        """Собирает текст PDF-ячейки таблицы своими руками.
+
+        Используется вместо table.extract()/extract() ус-aggregated, потому что
+        extract() склеивает НАЛОЖЕННЫЕ тексты в PDF (скрытый слой поверх видимого)
+        посимвольно, давая мусор вида «Н1е2 .с0р5а...». Здесь мы берём линии
+        get_text("dict") внутри bbox ячейки и на каждой y-строке оставляем только
+        самую левую линию (с минимальным x0) — это отбрасывает скрытый дубль,
+        который обычно лежит правее и на той же высоте.
+        """
+        if page is None:
+            return ""
+        x0_c, y0_c, x1_c, y1_c = (float(v) for v in cell_bbox)
+        # собираем строки текста внутри ячейки
+        lines = []
+        for block in page.get_text("dict").get("blocks", []):
+            if block.get("type") != 0:
+                continue
+            for line in block.get("lines", []):
+                bx0, by0, bx1, by1 = line.get("bbox", [0, 0, 0, 0])
+                # линия пересекает ячейку по горизонтали и полностью внутри по вертикали
+                if bx0 >= x1_c or bx1 <= x0_c or by1 <= y0_c or by0 >= y1_c:
+                    continue
+                # вертикальный центр линии должен быть в пределах ячейки
+                cy = (by0 + by1) / 2
+                if not (y0_c <= cy <= y1_c):
+                    continue
+                text = "".join(span.get("text", "") for span in line.get("spans", []))
+                if text.strip():
+                    lines.append((bx0, cy, text))
+        if not lines:
+            return ""
+        # группируем в y-строки и берём самую левую линию в каждой
+        from collections import defaultdict
+        rows = defaultdict(list)
+        for bx, cy, text in lines:
+            rows[round(cy)].append((bx, text))
+        parts = []
+        for cy in sorted(rows):
+            best = min(rows[cy], key=lambda z: z[0])
+            parts.append(best[1])
+        return "\n".join(parts)
 
     def _select_output_file(self) -> None:
         current_text = self.combined_output_var.get().strip()
