@@ -1,5 +1,5 @@
 {
-  "version": "1.8.49",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.49/DMTools.exe",
-  "notes": "Вкладка «Сканер» (живой приём кодов в список, сохранение в CSV/Excel), автомониторинг папки (новый PDF → CSV автоматически), слияние CSV с удалением дублей, Excel-дашборд по партии."
+  "version": "1.8.50",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.50/DMTools.exe",
+  "notes": "Конвертер: исправлена кириллица в Word→PDF и TXT→PDF (была «···»), добавлен перенос строк, полное декодирование HTML-сущностей в HTML→Word, чистые пробелы в PDF→Word/TXT."
 }
