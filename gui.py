@@ -30,6 +30,91 @@ from converter import (
 )
 
 
+def _pdf_text_page_font(page) -> str:
+    """Возвращает имя кириллического шрифта, зарегистрированного в странице PDF.
+
+    page.insert_text без шрифта использует Helvetica, в которой нет кириллицы,
+    и русский текст выводится как «···». Здесь подключаем системный шрифт
+    (Arial/Times) с кириллицей и регистрируем его в текущей странице через
+    insert_font, возвращая имя для использования в insert_text/get_text_length.
+    """
+    import pymupdf as _mu
+    global _PDF_GUI_FONT_NAME, _PDF_GUI_FONT_FILE
+    if _PDF_GUI_FONT_NAME is None:
+        fontfile = None
+        for cand in (
+            r"C:/Windows/Fonts/arial.ttf",
+            r"C:/Windows/Fonts/times.ttf",
+            r"C:/Windows/Fonts/DejaVuSans.ttf",
+        ):
+            if os.path.exists(cand):
+                fontfile = cand
+                break
+        if fontfile:
+            _PDF_GUI_FONT_NAME = fontfile
+            _PDF_GUI_FONT_FILE = fontfile
+        else:
+            _PDF_GUI_FONT_NAME = "helv"
+    # регистрируем шрифт в текущей странице (на каждой странице — своя таблица шрифтов)
+    if _PDF_GUI_FONT_NAME != "helv":
+        try:
+            page.insert_font(fontname="F_cp", fontfile=_PDF_GUI_FONT_NAME)
+            return "F_cp"
+        except Exception:
+            pass
+    return "helv"
+
+
+_PDF_GUI_FONT_NAME: str | None = None
+_PDF_GUI_FONT_FILE: str | None = None
+
+
+def _pdf_wrap_text(page, text: str, x: float, y: float, size: float,
+                   max_width: float, line_h: float) -> None:
+    """Вставляет текст в PDF с кириллическим шрифтом и переносом по ширине
+    (иначе длинные строки обрезаются на краю страницы).
+
+    Возвращает новую координату y после отрисовки всех перенесённых строк.
+    """
+    import pymupdf as _mu
+    # измеряем ширину через объект Font (он умеет text_length по любому файлу),
+    # а вставляем через insert_text с зарегистрированным в странице именем.
+    fontname = _pdf_text_page_font(page)
+    measurer = None
+    global _PDF_GUI_FONT_FILE
+    if fontname == "F_cp" and _PDF_GUI_FONT_FILE is not None:
+        try:
+            measurer = _mu.Font(fontfile=_PDF_GUI_FONT_FILE)
+        except Exception:
+            measurer = None
+    lines: list[str] = []
+    for raw in text.splitlines():
+        if not raw:
+            lines.append("")
+            continue
+        # Arial кодирует обычный пробел как неразрывный (U+00A0) при переносе —
+        # нормализуем обратно в обычный пробел, чтобы извлечение текста не давало «\xa0»
+        raw = raw.replace("\xa0", " ")
+        current = ""
+        for ch in raw:
+            trial = current + ch
+            if measurer is not None:
+                width = measurer.text_length(trial, fontsize=size)
+            else:
+                width = _mu.get_text_length(trial, fontname=fontname, fontsize=size)
+            if width > max_width and current:
+                lines.append(current)
+                current = ch
+            else:
+                current = trial
+        if current:
+            lines.append(current)
+    for line in lines:
+        page.insert_text((x, y), line, fontsize=size, fontname=fontname)
+        y += line_h
+    return y
+
+
 def _safe_startfile(path: str) -> None:
     """Безопасно открывает файл/папку системным обработчиком."""
     try:
@@ -242,12 +327,10 @@ class ConverterGui:
         self.quick_code_var = tk.StringVar()
         self.quick_status_var = tk.StringVar(value="Вставьте код маркировки и нажмите «Проверить»")
         self._quick_image_ref: object | None = None
-        # --- Вкладка «Топ-10» (расширения + универсальный конвертер) ---
-        self.top10_folder_var = tk.StringVar()
-        self.top10_status_var = tk.StringVar(value="Выберите папку, чтобы увидеть топ-10 расширений")
-        self.top10_file_var = tk.StringVar()
-        self.top10_convert_from_var = tk.StringVar(value="PDF (.pdf)")
-        self.top10_convert_to_var = tk.StringVar(value="Word (.docx)")
+        # --- Конвертер файлов ---
+        self.conv_file_var = tk.StringVar()
+        self.conv_from_var = tk.StringVar(value="PDF (.pdf)")
+        self.conv_to_var = tk.StringVar(value="Word (.docx)")
         self._profiles: dict[str, dict] = {}
         self._last_generated_pdf: str | None = None
         self._last_generated_pages: int = 0
@@ -255,7 +338,7 @@ class ConverterGui:
 
         # видимость вкладок (галочки в меню «Вид»)
         self._tab_order = ["PDF → CSV", "CSV → DataMatrix",
-                           "Быстрый DataMatrix", "Сканер", "Топ-10", "Журнал"]
+                           "Быстрый DataMatrix", "Сканер", "Журнал"]
         self._tab_visible = {name: tk.BooleanVar(value=True)
                              for name in self._tab_order}
         # рамки-держатели подписей ошибок дат — фон обновляется вместе с темой
@@ -340,9 +423,6 @@ class ConverterGui:
         view_menu.add_checkbutton(
             label="Журнал", variable=self._tab_visible["Журнал"],
             command=lambda: self._toggle_tab("Журнал"))
-        view_menu.add_checkbutton(
-            label="Топ-10", variable=self._tab_visible["Топ-10"],
-            command=lambda: self._toggle_tab("Топ-10"))
         menubar.add_cascade(label="Вид", menu=view_menu)
 
         scanner_menu = tk.Menu(menubar, tearoff=0)
@@ -1602,8 +1682,8 @@ class ConverterGui:
         tab6.columnconfigure(0, weight=1)
         tab6.rowconfigure(1, weight=1)
 
-        # --- Блок: популярные конверсии (топ-10) ---
-        pop = ttk.LabelFrame(tab6, text="Популярные конверсии (топ-10)", padding=(10, 6))
+        # --- Блок: популярные конверсии ---
+        pop = ttk.LabelFrame(tab6, text="Популярные конверсии", padding=(10, 6))
         pop.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         pop.columnconfigure(0, weight=1)
         pop_text = (
@@ -1628,35 +1708,35 @@ class ConverterGui:
 
         ttk.Label(conv_frame, text="Файл:").grid(
             row=0, column=0, sticky="e", padx=(0, 8), pady=(0, 6))
-        self.top10_file_entry = ttk.Entry(conv_frame, textvariable=self.top10_file_var)
-        self.top10_file_entry.grid(row=0, column=1, sticky="ew", pady=(0, 6))
+        self.conv_file_entry = ttk.Entry(conv_frame, textvariable=self.conv_file_var)
+        self.conv_file_entry.grid(row=0, column=1, sticky="ew", pady=(0, 6))
         ttk.Button(
-            conv_frame, text="Выбрать файл", command=self._top10_select_file,
+            conv_frame, text="Выбрать файл", command=self._conv_select_file,
             style="Neutral.TButton",
         ).grid(row=0, column=2, padx=(8, 0), pady=(0, 6))
 
         ttk.Label(conv_frame, text="Из формата:").grid(
             row=1, column=0, sticky="e", padx=(0, 8), pady=(0, 6))
-        self.top10_convert_from_combo = ttk.Combobox(
-            conv_frame, textvariable=self.top10_convert_from_var,
+        self.conv_from_combo = ttk.Combobox(
+            conv_frame, textvariable=self.conv_from_var,
             state="readonly", width=22,
             values=("PDF (.pdf)", "Word (.docx)", "HTML (.html)", "TXT (.txt)",
                     "Markdown (.md)", "CSV (.csv)", "Excel (.xlsx)", "PNG (.png)",
                     "JPG (.jpg)"),
         )
-        self.top10_convert_from_combo.grid(row=1, column=1, sticky="w", pady=(0, 6))
+        self.conv_from_combo.grid(row=1, column=1, sticky="w", pady=(0, 6))
 
         ttk.Label(conv_frame, text="В формат:").grid(
             row=2, column=0, sticky="e", padx=(0, 8), pady=(0, 6))
-        self.top10_convert_to_combo = ttk.Combobox(
-            conv_frame, textvariable=self.top10_convert_to_var,
+        self.conv_to_combo = ttk.Combobox(
+            conv_frame, textvariable=self.conv_to_var,
             state="readonly", width=22,
             values=("Word (.docx)", "PDF (.pdf)", "TXT (.txt)", "HTML (.html)",
                     "Excel (.xlsx)", "CSV (.csv)", "PNG (.png)", "JPG (.jpg)"),
         )
-        self.top10_convert_to_combo.grid(row=2, column=1, sticky="w", pady=(0, 6))
+        self.conv_to_combo.grid(row=2, column=1, sticky="w", pady=(0, 6))
         ttk.Button(
-            conv_frame, text="Конвертировать", command=self._top10_convert,
+            conv_frame, text="Конвертировать", command=self._conv_convert,
             style="Accent.TButton",
         ).grid(row=2, column=2, padx=(8, 0), pady=(0, 6))
 
@@ -1666,7 +1746,7 @@ class ConverterGui:
                  "Результат сохраняется рядом с исходным файлом.",
         ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
         ttk.Button(
-            conv_frame, text="Открыть папку", command=self._top10_open_folder,
+            conv_frame, text="Открыть папку", command=self._conv_open_folder,
             style="Neutral.TButton",
         ).grid(row=3, column=2, padx=(8, 0), pady=(6, 0))
 
@@ -4155,14 +4235,14 @@ class ConverterGui:
             self.source_var.set(str(path))
             self.combined_output_var.set(str(default_combined_output_path(path)))
 
-    def _top10_select_file(self) -> None:
+    def _conv_select_file(self) -> None:
         selected = filedialog.askopenfilename(title="Выберите файл для конвертации")
         if selected:
-            self.top10_file_var.set(selected)
+            self.conv_file_var.set(selected)
 
-    def _top10_open_folder(self) -> None:
+    def _conv_open_folder(self) -> None:
         """Открывает папку, где лежит выбранный файл (рядом с ним сохраняется результат)."""
-        src = self.top10_file_var.get().strip()
+        src = self.conv_file_var.get().strip()
         folder = str(Path(src).parent) if src and Path(src).parent.exists() else None
         if not folder:
             messagebox.showinfo("Открыть папку", "Сначала выберите файл для конвертации.")
@@ -4172,17 +4252,17 @@ class ConverterGui:
         except OSError:
             messagebox.showerror("Открыть папку", f"Не удалось открыть папку:\n{folder}")
 
-    def _top10_convert(self) -> None:
+    def _conv_convert(self) -> None:
         """Конвертирует выбранный файл из выбранного формата в указанный формат
         (как простой конвертер). Форматы выбираются пользователем в выпадающих списках."""
-        src = self.top10_file_var.get().strip()
+        src = self.conv_file_var.get().strip()
         if not src or not Path(src).is_file():
             messagebox.showwarning("Конвертер", "Выберите файл для конвертации.")
             return
         src_path = Path(src)
         # формат берём из выпадающего списка «Из формата»
-        frm_label = self.top10_convert_from_var.get()
-        to = self.top10_convert_to_var.get()
+        frm_label = self.conv_from_var.get()
+        to = self.conv_to_var.get()
 
         # расширение исходного файла должно соответствовать выбранному формату
         src_ext = src_path.suffix.lower()
@@ -4236,12 +4316,8 @@ class ConverterGui:
             saved_label = f"{target.name} (файл уже был)"
         try:
             self._convert_impl(frm, to, src_path, target)
-            self.top10_status_var.set(
-                f"Готово: {saved_label} (рядом с исходным файлом)"
-            )
             messagebox.showinfo("Конвертер", f"Создан файл:\n{target}")
         except Exception as exc:
-            self.top10_status_var.set("Ошибка конвертации: " + str(exc))
             messagebox.showerror("Конвертер", f"Ошибка: {exc}")
 
     def _convert_impl(self, frm: str, to: str, src_path: Path, target: Path) -> None:
@@ -4261,14 +4337,17 @@ class ConverterGui:
                     if not text.strip():
                         continue
                     for line in text.splitlines():
-                        doc.add_paragraph(line)
+                        # неразрывный пробел \xa0 -> обычный, чтобы в Word был чистый текст
+                        doc.add_paragraph(line.replace("\xa0", " "))
             doc.save(str(target))
         elif frm == "PDF" and to == "TXT (.txt)":
             with fitz.open(str(src_path)) as pdf:
                 text = "\n".join(page.get_text("text") for page in pdf)
-            target.write_text(text, encoding="utf-8")
+            target.write_text(text.replace("\xa0", " "), encoding="utf-8")
         elif frm == "Word" and to == "PDF (.pdf)":
-            # Word -> PDF: извлекаем текст из абзацев и строим PDF через PyMuPDF
+            # Word -> PDF: извлекаем текст из абзацев и строим PDF через PyMuPDF.
+            # Используем кириллический шрифт и перенос по ширине, чтобы русский
+            # текст отображался корректно и длинные строки не обрезались.
             from docx import Document as D
             doc = D(str(src_path))
             out = fitz.open()
@@ -4278,8 +4357,7 @@ class ConverterGui:
                 t = para.text.strip()
                 if not t:
                     continue
-                page.insert_text((50, y), t, fontsize=11)
-                y += 18
+                y = _pdf_wrap_text(page, t, 50, y, 11, 490, 18)
                 if y > 790:
                     page = out.new_page()
                     y = 50
@@ -4294,13 +4372,17 @@ class ConverterGui:
             out.close()
         elif frm == "HTML" and to == "Word (.docx)":
             from docx import Document as D
-            html = src_path.read_text(encoding="utf-8", errors="replace")
-            # примитивная конвертация: удаляем теги, остаётся текст по абзацам
+            import html as _html
             import re
+            html = src_path.read_text(encoding="utf-8", errors="replace")
+            # конвертируем HTML в абзацы: разбиваем по тегам <p>/<div>/<li> и
+            # убираем прочие теги полностью, а сущности (&amp;, &lt; и т.п.)
+            # декодируем через html.unescape (обрабатывает все именованные и
+            # числовые ссылки, включая &nbsp;).
             doc = D()
-            for block in re.split(r"<\s*p[^>]*>", html):
+            for block in re.split(r"<\s*(?:p|div|li|h[1-6]|br)[^>]*>", html):
                 txt = re.sub(r"<[^>]+>", "", block)
-                txt = txt.replace("&nbsp;", " ").strip()
+                txt = _html.unescape(txt).strip()
                 if txt:
                     doc.add_paragraph(txt)
             doc.save(str(target))
@@ -4310,8 +4392,7 @@ class ConverterGui:
             page = out.new_page()
             y = 50
             for line in text.splitlines():
-                page.insert_text((50, y), line, fontsize=11)
-                y += 18
+                y = _pdf_wrap_text(page, line, 50, y, 11, 490, 18)
                 if y > 790:
                     page = out.new_page()
                     y = 50
