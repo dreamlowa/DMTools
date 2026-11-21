@@ -255,7 +255,7 @@ class ConverterGui:
 
         # видимость вкладок (галочки в меню «Вид»)
         self._tab_order = ["PDF → CSV", "CSV → DataMatrix",
-                           "Быстрый DataMatrix", "Топ-10", "Журнал"]
+                           "Быстрый DataMatrix", "Сканер", "Топ-10", "Журнал"]
         self._tab_visible = {name: tk.BooleanVar(value=True)
                              for name in self._tab_order}
         # рамки-держатели подписей ошибок дат — фон обновляется вместе с темой
@@ -310,6 +310,15 @@ class ConverterGui:
         tools_dm.add_command(label="Экспорт PNG", command=self._export_dm_png)
         tools_dm.add_command(label="Открыть папку", command=self._open_dm_output_folder)
         tools_menu.add_cascade(label="CSV → этикетки", menu=tools_dm)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Слияние CSV (дедупликация)…",
+                               command=self._merge_csv_dialog)
+        tools_menu.add_command(label="Excel-дашборд по партии…",
+                               command=self._dashboard_dialog)
+        tools_menu.add_command(label="Автомониторинг папки…",
+                               command=self._watch_folder_dialog)
+        tools_menu.add_command(label="Остановить автомониторинг",
+                               command=self._watch_folder_stop)
         menubar.add_cascade(label="Инструменты", menu=tools_menu)
 
         view_menu = tk.Menu(menubar, tearoff=0)
@@ -325,6 +334,9 @@ class ConverterGui:
         view_menu.add_checkbutton(
             label="Быстрый DataMatrix", variable=self._tab_visible["Быстрый DataMatrix"],
             command=lambda: self._toggle_tab("Быстрый DataMatrix"))
+        view_menu.add_checkbutton(
+            label="Сканер", variable=self._tab_visible["Сканер"],
+            command=lambda: self._toggle_tab("Сканер"))
         view_menu.add_checkbutton(
             label="Журнал", variable=self._tab_visible["Журнал"],
             command=lambda: self._toggle_tab("Журнал"))
@@ -1544,6 +1556,45 @@ class ConverterGui:
             tab4, bg="#ffffff", highlightthickness=0
         )
         self.quick_preview_canvas.grid(row=3, column=0, sticky="nsew")
+
+        # --- Вкладка 7: Сканер (аккумуляция кодов в список + сохранение) ---
+        tab7 = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(tab7, text="Сканер")
+        tab7.columnconfigure(0, weight=1)
+        tab7.rowconfigure(2, weight=1)
+
+        ttk.Label(
+            tab7,
+            text="Живой приём кодов со сканера. Считанные коды накапливаются в "
+                 "списке ниже — их можно очистить или сохранить в CSV.",
+            wraplength=620, justify="left",
+        ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 6))
+
+        ttk.Button(
+            tab7, text="Очистить список", command=self._scanner_clear,
+            style="Neutral.TButton",
+        ).grid(row=1, column=0, sticky="w", pady=(0, 6))
+        ttk.Button(
+            tab7, text="Сохранить в CSV…", command=self._scanner_save_csv,
+            style="Accent.TButton",
+        ).grid(row=1, column=1, sticky="w", pady=(0, 6), padx=(8, 0))
+        ttk.Button(
+            tab7, text="Экспорт в Excel…", command=self._scanner_export_xlsx,
+            style="Info.TButton",
+        ).grid(row=1, column=2, sticky="w", pady=(0, 6), padx=(8, 0))
+
+        self.scanner_log = scrolledtext.ScrolledText(
+            tab7, height=12, wrap="none", state="disabled",
+            font=("Consolas", 9),
+        )
+        self.scanner_log.grid(row=2, column=0, columnspan=4, sticky="nsew")
+        self.scanner_counter_label = ttk.Label(
+            tab7, text="Считано кодов: 0", font=("Arial", 10, "bold"),
+        )
+        self.scanner_counter_label.grid(row=3, column=0, columnspan=4,
+                                        sticky="w", pady=(6, 0))
+        # приём сканером уже настроен через меню «Сканер»; сюда коды
+        # добавляются в _on_scanner_code.
 
         # --- Вкладка 6: Конвертер файлов ---
         tab6 = ttk.Frame(self.notebook, padding=12)
@@ -2827,6 +2878,7 @@ class ConverterGui:
     def _on_scanner_code(self, val: str) -> None:
         """Сканированный код: инкремент счётчика и перенос в Быстрый DataMatrix."""
         self._scanner_counter = getattr(self, "_scanner_counter", 0) + 1
+        self._scanner_track_code(val)
         self._set_quick_code(val)
         self._select_tab("Быстрый DataMatrix")
         self._quick_generate()
@@ -5648,6 +5700,333 @@ class ConverterGui:
         self._log_op(f"Отчёт о партии сохранён: {selected}")
         messagebox.showinfo("Отчёт о партии", f"Отчёт сохранён:\n{selected}")
 
+    # ------------------------------------------------------------------
+    # Вкладка «Сканер»: аккумуляция считанных кодов
+    # ------------------------------------------------------------------
+    def _scanner_track_code(self, val: str) -> None:
+        """Добавляет считанный код в список вкладки «Сканер», если она есть."""
+        try:
+            if not hasattr(self, "scanner_log"):
+                return
+            log = self.scanner_log
+            log.configure(state="normal")
+            log.insert("end", val + "\n")
+            log.see("end")
+            log.configure(state="disabled")
+            n = len(str(log.get("1.0", "end-1c")).splitlines())
+            self.scanner_counter_label.configure(text=f"Считано кодов: {n}")
+        except Exception:
+            pass
+
+    def _scanner_clear(self) -> None:
+        """Очищает список считанных кодов во вкладке «Сканер»."""
+        try:
+            self.scanner_log.configure(state="normal")
+            self.scanner_log.delete("1.0", "end")
+            self.scanner_log.configure(state="disabled")
+            self.scanner_counter_label.configure(text="Считано кодов: 0")
+        except Exception:
+            pass
+
+    def _scanner_export_xlsx(self) -> None:
+        """Сохраняет накопленные коды в Excel-файл (по одному коду на строку)."""
+        try:
+            text = self.scanner_log.get("1.0", "end-1c")
+        except Exception:
+            text = ""
+        codes = [ln for ln in text.splitlines() if ln.strip()]
+        if not codes:
+            messagebox.showinfo("Сканер", "Список пуст — сначала считайте коды.")
+            return
+        out = filedialog.asksaveasfilename(
+            title="Сохранить коды в Excel",
+            initialdir=self._dialog_initial_dir(),
+            initialfile="отсканированные_коды.xlsx",
+            defaultextension=".xlsx",
+            filetypes=(("Excel files", "*.xlsx"), ("All files", "*.*")),
+        )
+        if not out:
+            return
+        import openpyxl
+        try:
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Коды"
+            ws.append(["№", "Код маркировки"])
+            for i, c in enumerate(codes, 1):
+                ws.append([i, c])
+            wb.save(out)
+        except OSError as exc:
+            messagebox.showerror("Ошибка", f"Не удалось сохранить Excel:\n{exc}")
+            return
+        self._log_op(f"Сканер: экспортировано {len(codes)} кодов в {out}")
+        messagebox.showinfo("Сканер", f"Сохранено кодов: {len(codes)}\n{out}")
+
+    def _scanner_save_csv(self) -> None:
+        """Сохраняет накопленные коды в CSV-файл (по одному коду на строку)."""
+        try:
+            text = self.scanner_log.get("1.0", "end-1c")
+        except Exception:
+            text = ""
+        codes = [ln for ln in text.splitlines() if ln.strip()]
+        if not codes:
+            messagebox.showinfo("Сканер", "Список пуст — сначала считайте коды.")
+            return
+        out = filedialog.asksaveasfilename(
+            title="Сохранить коды в CSV",
+            initialdir=self._dialog_initial_dir(),
+            initialfile="отсканированные_коды.csv",
+            defaultextension=".csv",
+            filetypes=(("CSV files", "*.csv"), ("All files", "*.*")),
+        )
+        if not out:
+            return
+        try:
+            with open(out, "w", encoding="utf-8-sig", newline="") as fh:
+                fh.write("\r\n".join(codes) + "\r\n")
+        except OSError as exc:
+            messagebox.showerror("Ошибка", f"Не удалось сохранить CSV:\n{exc}")
+            return
+        self._log_op(f"Сканер: сохранено {len(codes)} кодов в {out}")
+        messagebox.showinfo("Сканер", f"Сохранено кодов: {len(codes)}\n{out}")
+
+    # ------------------------------------------------------------------
+    # Слияние CSV с дедупликацией
+    # ------------------------------------------------------------------
+    def _merge_csv_dialog(self) -> None:
+        """Объединяет несколько CSV в один, удаляя дубликаты кода."""
+        files = filedialog.askopenfilenames(
+            title="Выберите CSV-файлы для слияния",
+            initialdir=self._dialog_initial_dir(),
+            filetypes=(("CSV files", "*.csv"), ("Text files", "*.txt"), ("All files", "*.*")),
+        )
+        if not files:
+            return
+        self._remember_dir(str(Path(files[0]).parent))
+        out = filedialog.asksaveasfilename(
+            title="Сохранить объединённый CSV",
+            initialdir=str(Path(files[0]).parent),
+            initialfile="объединённые_коды.csv",
+            defaultextension=".csv",
+            filetypes=(("CSV files", "*.csv"), ("All files", "*.*")),
+        )
+        if not out:
+            return
+
+        total = added = dup = 0
+        seen: set[str] = set()
+        lines_out: list[str] = []
+        try:
+            for f in files:
+                with open(f, "r", encoding="utf-8-sig") as fh:
+                    for raw in fh:
+                        cell = raw.rstrip("\r\n").strip()
+                        if not cell:
+                            continue
+                        total += 1
+                        if cell in seen:
+                            dup += 1
+                            continue
+                        seen.add(cell)
+                        lines_out.append(cell)
+            added = len(lines_out)
+            with open(out, "w", encoding="utf-8-sig", newline="") as fh:
+                fh.write("\r\n".join(lines_out))
+                if lines_out:
+                    fh.write("\r\n")
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("Ошибка", f"Не удалось выполнить слияние:\n{exc}")
+            return
+        self._log_op(
+            f"Слияние CSV: {len(files)} файлов, всего строк {total}, "
+            f"уникальных {added}, дублей удалено {dup}"
+        )
+        messagebox.showinfo(
+            "Слияние завершено",
+            f"Файлов: {len(files)}\nВсего строк: {total}\n"
+            f"Уникальных (записано): {added}\nДублей удалено: {dup}\n\n"
+            f"Сохранено: {out}",
+        )
+
+    # ------------------------------------------------------------------
+    # Excel-дашборд по партии
+    # ------------------------------------------------------------------
+    def _dashboard_dialog(self) -> None:
+        """Строит Excel-дашборд по CSV-партии: статистика GTIN, серии, коды."""
+        files = filedialog.askopenfilenames(
+            title="Выберите CSV-файл(ы) с кодами",
+            initialdir=self._dialog_initial_dir(),
+            filetypes=(("CSV files", "*.csv"), ("Text files", "*.txt"), ("All files", "*.*")),
+        )
+        if not files:
+            return
+        self._remember_dir(str(Path(files[0]).parent))
+        out = filedialog.asksaveasfilename(
+            title="Сохранить дашборд",
+            initialdir=str(Path(files[0]).parent),
+            initialfile="дашборд_партии.xlsx",
+            defaultextension=".xlsx",
+            filetypes=(("Excel files", "*.xlsx"), ("All files", "*.*")),
+        )
+        if not out:
+            return
+
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill
+
+        # собираем уникальные коды
+        seen: set[str] = set()
+        for f in files:
+            try:
+                with open(f, "r", encoding="utf-8-sig") as fh:
+                    for raw in fh:
+                        c = raw.rstrip("\r\n").strip()
+                        if c:
+                            seen.add(c)
+            except OSError as exc:
+                messagebox.showerror("Ошибка", f"Не удалось прочитать {f}:\n{exc}")
+                return
+        codes = list(seen)
+
+        # парсим GTIN
+        gtin_counter: dict[str, int] = {}
+        gtin_counts_total = 0
+        for c in codes:
+            if c.startswith("01") and len(c) >= 16:
+                g = c[2:16]
+                gtin_counter[g] = gtin_counter.get(g, 0) + 1
+                gtin_counts_total += 1
+            elif c.startswith("01"):
+                g = c[2:]
+                gtin_counter[g] = gtin_counter.get(g, 0) + 1
+                gtin_counts_total += 1
+        gtin_ranked = sorted(gtin_counter.items(), key=lambda kv: -kv[1])
+
+        header_fill = PatternFill("solid", fgColor="DDEBF7")
+        bold = Font(bold=True)
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Статистика"
+        ws["A1"] = "Дашборд партии"
+        ws["A1"].font = Font(bold=True, size=14)
+        rows = [
+            ["Всего уникальных кодов", len(codes)],
+            ["Всего строк в файлах", gtin_counts_total],
+            ["Количество GTIN", len(gtin_counter)],
+        ]
+        r = 3
+        for k, v in rows:
+            ws.cell(row=r, column=1, value=k).font = bold
+            ws.cell(row=r, column=2, value=v)
+            r += 1
+
+        # лист GTIN
+        ws2 = wb.create_sheet("По GTIN")
+        ws2.append(["GTIN (01)", "Кол-во", "Доля"])
+        tot = sum(v for _, v in gtin_ranked) or 1
+        for g, n in gtin_ranked:
+            ws2.append([g, n, round(n / tot * 100, 2)])
+        for c in ws2[1]:
+            c.font = bold
+            c.fill = header_fill
+
+        # лист со всеми кодами
+        ws3 = wb.create_sheet("Коды")
+        ws3.append(["№", "Код маркировки"])
+        for i, c in enumerate(codes, 1):
+            ws3.append([i, c])
+        for c in ws3[1]:
+            c.font = bold
+            c.fill = header_fill
+
+        try:
+            wb.save(out)
+        except OSError as exc:
+            messagebox.showerror("Ошибка", f"Не удалось сохранить дашборд:\n{exc}")
+            return
+        self._log_op(f"Excel-дашборд: уникальных кодов {len(codes)} из {len(files)} файлов -> {out}")
+        messagebox.showinfo("Дашборд", f"Дашборд сохранён:\n{out}")
+
+    # ------------------------------------------------------------------
+    # Автомониторинг папки: новые PDF -> CSV без ручных действий
+    # ------------------------------------------------------------------
+    def _watch_folder_dialog(self) -> None:
+        """Выбор папки для фонового мониторинга и запуск наблюдения."""
+        folder = filedialog.askdirectory(
+            title="Папка для автомониторинга (новые PDF → CSV)",
+            initialdir=self._dialog_initial_dir(),
+        )
+        if not folder:
+            return
+        self._remember_dir(folder)
+        self._watch_folder = str(folder)
+        self._watch_polling = getattr(self, "_watch_polling", False)
+        already = getattr(self, "_watch_thread", None)
+        if already and already.is_alive():
+            self._log_op(f"Автомониторинг уже запущен для: {folder}")
+            messagebox.showinfo("Автомониторинг",
+                                "Наблюдение уже работает для этой/другой папки.")
+            return
+        # запуск фонового потока
+        import threading as _th
+        self._watch_stop = threading.Event()
+        self._watch_processed: set[tuple[str, float]] = set()
+        self._watch_thread = _th.Thread(
+            target=self._watch_loop, args=(folder,), daemon=True)
+        self._watch_thread.start()
+        self._log_op(f"Автомониторинг запущен: {folder} (новые PDF → CSV)")
+        messagebox.showinfo(
+            "Автомониторинг",
+            f"Отслеживаю папку:\n{folder}\n\n"
+            "Как только в неё попадёт новый PDF — он автоматически "
+            "конвертируется в CSV рядом. Работает, пока программа открыта.\n"
+            "Чтобы остановить — выберите «Инструменты → Остановить автомониторинг».",
+        )
+
+    def _watch_folder_stop(self) -> None:
+        """Останавливает фоновый мониторинг папки."""
+        if getattr(self, "_watch_thread", None) and self._watch_thread.is_alive():
+            getattr(self, "_watch_stop", threading.Event()).set()
+            self._watch_thread.join(timeout=2)
+        self._log_op("Автомониторинг остановлен")
+        messagebox.showinfo("Автомониторинг", "Наблюдение за папкой остановлено.")
+
+    def _watch_loop(self, folder: str) -> None:
+        """Фоновая проверка папки на новые PDF (раз в 3 секунды)."""
+        import time as _t
+        from converter import convert_pdf
+        stop = getattr(self, "_watch_stop", threading.Event())
+        processed = getattr(self, "_watch_processed", set())
+        seen: set[tuple[str, float]] = set(getattr(self, "_watch_processed", set()))
+        while not stop.is_set():
+            try:
+                for p in Path(folder).glob("**/*.pdf"):
+                    key = (str(p), p.stat().st_mtime)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    processed.add(key)
+                    # ждём мгновение, чтобы файл дописался
+                    _t.sleep(0.5)
+                    try:
+                        out = p.with_suffix(".csv")
+                        convert_pdf(
+                            p, out,
+                            log=None,
+                            escape_csv=True,
+                        )
+                        self.root.after(0, lambda path=str(out):
+                                        self._log_op(f"[Авто] PDF → CSV: {path}"))
+                    except Exception as exc:
+                        self.root.after(0, lambda msg=str(exc):
+                                        self._log_op(f"[Авто] Ошибка {p.name}: {msg}"))
+            except Exception:
+                pass
+            # пересобираем seen из processed при каждом цикле
+            seen = set(getattr(self, "_watch_processed", set()))
+            stop.wait(3)
+
     def _on_close(self) -> None:
         if self.running and not messagebox.askyesno(
             "Выход", "Конвертация выполняется. Остановить её и закрыть программу?"
@@ -5655,6 +6034,8 @@ class ConverterGui:
             return
         self._save_config()
         self._stop_com_listener()
+        if getattr(self, "_watch_thread", None) and self._watch_thread.is_alive():
+            getattr(self, "_watch_stop", threading.Event()).set()
         self.cancel_event.set()
         self.root.destroy()
 
