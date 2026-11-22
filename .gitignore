@@ -9,3 +9,4 @@ __pycache__/
 .gigatool/
 PDFDataMatrixToCSV_log.txt
 tcltk/
+updater_helper.spec
