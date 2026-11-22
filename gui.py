@@ -57,6 +57,125 @@ _CUSTOM_BUTTON_STYLES = (
 )
 
 
+# Цветовые палитры кнопок для тёмной и светлой темы (акцентные стили).
+# Используются классом RoundedButton (закруглённые кнопки).
+_BTN_COLORS = {
+    "Accent": {"dark_bg": "#2CA847", "active_bg": "#24913c", "pressed_bg": "#1f7e34"},
+    "Info": {"dark_bg": "#2b6cb0", "active_bg": "#245a94", "pressed_bg": "#1d4b7a"},
+    "Warn": {"dark_bg": "#d97706", "active_bg": "#b75f00", "pressed_bg": "#995200"},
+    "Danger": {"dark_bg": "#c0392b", "active_bg": "#a93226", "pressed_bg": "#922b21"},
+    "Neutral": {"dark_bg": "#6c757d", "active_bg": "#5a6268", "pressed_bg": "#4c5258"},
+}
+
+
+class RoundedButton(tk.Frame):
+    """Закруглённая кнопка на основе Canvas.
+
+    Повторяет поведение ttk.Button с цветным стилем (Accent/Info/Warn/Danger/
+    Neutral): закруглённый фон, белый текст, состояния active/disabled.
+    Автоматически подстраивается под тёмную/светлую тему при вызове set_theme().
+    """
+
+    def __init__(self, master, text: str, command=None, style: str = "Accent",
+                 radius: int = 10, padding: tuple = (12, 6), width: int = 0):
+        super().__init__(master)
+        self.command = command
+        self.style_name = style
+        self.radius = radius
+        self.padx, self.pady = padding
+        self._enabled = True
+        self._theme_dark = False
+        self._text = text
+        self._width = width
+        shr = str(master.winfo_class())  # noqa
+        self.canvas = tk.Canvas(self, highlightthickness=0, bd=0)
+        self.canvas.pack(fill="both", expand=True)
+        self.canvas.bind("<Configure>", lambda _e: self._redraw())
+        self._bind_events()
+        self.set_theme(False)
+        self.update()
+
+    @property
+    def palette(self):
+        return _BTN_COLORS.get(self.style_name, _BTN_COLORS["Neutral"])
+
+    def set_theme(self, dark: bool) -> None:
+        """Перекрашивает кнопку под тёмную/светлую тему (и её фон)."""
+        self._theme_dark = dark
+        base = self.palette["dark_bg"]
+        bg_outer = "#1f1f1f" if dark else "#f0f0f0"
+        fg = "#ffffff"
+        self._bg_outer = bg_outer
+        self._cfg = {"base": base, "fg": fg, "active": self.palette["active_bg"]}
+        self.canvas.configure(bg=bg_outer)
+        self._redraw()
+
+    def _bind_events(self) -> None:
+        self.canvas.bind("<Button-1>", self._on_click)
+        self.canvas.bind("<Enter>", self._on_enter)
+        self.canvas.bind("<Leave>", self._on_leave)
+        for ev in ("<ButtonRelease-1>",):
+            self.canvas.bind(ev, self._on_release)
+
+    def _redraw(self, state: str = "normal") -> None:
+        c = self.canvas
+        c.delete("all")
+        cw = c.winfo_width()
+        w = max(cw, self._min_w()) if cw > 1 else self._min_w()
+        base = self._cfg["base"] if self._enabled else "#aaaaaa"
+        if state == "active" and self._enabled:
+            base = self._cfg["active"]
+        h = 30
+        r = self.radius
+        c.create_oval(0, 0, r * 2, r * 2, fill=base, outline="")
+        c.create_oval(w - r * 2, 0, w, r * 2, fill=base, outline="")
+        c.create_oval(0, h - r * 2, r * 2, h, fill=base, outline="")
+        c.create_oval(w - r * 2, h - r * 2, w, h, fill=base, outline="")
+        c.create_rectangle(r, 0, w - r, h, fill=base, outline="")
+        c.create_rectangle(0, r, w, h - r, fill=base, outline="")
+        c.create_text(w / 2, h / 2, text=self._text, fill=self._cfg["fg"],
+                      font=("Segoe UI", 9, "bold"))
+        c.configure(width=w, height=h)
+
+    def _min_w(self) -> int:
+        from tkinter import font as tkfont
+        f = tkfont.Font(font=("Segoe UI", 9, "bold"))
+        return f.measure(self._text) + self.padx * 2 + 8
+
+    def _on_click(self, _e=None) -> None:
+        if not self._enabled:
+            return
+        self._redraw("active")
+        if self.command:
+            self.command()
+
+    def _on_release(self, _e=None) -> None:
+        if self._enabled:
+            self._redraw("normal")
+
+    def _on_enter(self, _e=None) -> None:
+        if self._enabled:
+            self._redraw("active")
+
+    def _on_leave(self, _e=None) -> None:
+        if self._enabled:
+            self._redraw("normal")
+
+    def set_enabled(self, enabled: bool) -> None:
+        self._enabled = bool(enabled)
+        self._redraw()
+
+    def configure(self, *args, **kwargs):  # частичная совместимость с ttk
+        if "text" in kwargs:
+            self._text = kwargs.pop("text")
+            self._redraw()
+        if "state" in kwargs:
+            self.set_enabled(str(kwargs.pop("state")) != "disabled")
+        if kwargs:
+            super().configure(*args, **kwargs)
+        return self
+
+
 def _make_tooltip(widget, text: str):
     """Простая подсказка при наведении курсора на виджет:
     маленькое всплывающее окно с текстом появляется с задержкой и
@@ -962,6 +1081,19 @@ class ConverterGui:
         # к текущей теме — иначе после переключения темы туда-обратно остаются
         # блоки от прошлой темы (например, тёмный превью-канвас на светлой теме).
         self._refresh_tk_colors(self.root, bg, fg, field)
+        # Обновляем все закруглённые кнопки под текущую тему
+        for widget in self.root.winfo_children():
+            self._refresh_rounded(self.root, dark)
+
+    def _refresh_rounded(self, widget, dark: bool) -> None:
+        """Обновляет все RoundedButton под текущую тему."""
+        try:
+            if isinstance(widget, RoundedButton):
+                widget.set_theme(dark)
+        except Exception:
+            pass
+        for child in widget.winfo_children():
+            self._refresh_rounded(child, dark)
 
     def _refresh_tk_colors(self, widget, bg: str, fg: str, field: str) -> None:
         """Рекурсивно обновляет фон/текст у не-ttk виджетов под текущую тему.
@@ -972,6 +1104,10 @@ class ConverterGui:
         """
         try:
             cls = widget.winfo_class()
+            # Не перекрашиваем канвас внутри закруглённой кнопки — им управляет
+            # RoundedButton.set_theme()
+            if cls == "Canvas" and isinstance(widget.master, RoundedButton):
+                return
             if cls in ("Canvas", "Text"):
                 try:
                     widget.configure(bg=field)
@@ -1100,14 +1236,14 @@ class ConverterGui:
 
         source_buttons = ttk.Frame(outer)
         source_buttons.grid(row=1, column=2, padx=(8, 0), pady=(0, 8))
-        self.select_file_button = ttk.Button(
+        self.select_file_button = RoundedButton(
             source_buttons, text="Выбрать PDF", command=self._select_pdf,
-            style="Neutral.TButton"
+            style="Neutral", padding=(10, 5),
         )
         self.select_file_button.grid(row=0, column=0, padx=(0, 6))
-        self.select_folder_button = ttk.Button(
+        self.select_folder_button = RoundedButton(
             source_buttons, text="Выбрать папку", command=self._select_source_folder,
-            style="Neutral.TButton"
+            style="Neutral", padding=(10, 5),
         )
         self.select_folder_button.grid(row=0, column=1)
 
@@ -1126,9 +1262,9 @@ class ConverterGui:
         )
         self.output_entry = ttk.Entry(outer, textvariable=self.combined_output_var)
         self.output_entry.grid(row=3, column=1, sticky="ew", pady=(0, 8))
-        self.select_output_button = ttk.Button(
+        self.select_output_button = RoundedButton(
             outer, text="Выбрать файл", command=self._select_output_file,
-            style="Neutral.TButton"
+            style="Neutral", padding=(10, 5),
         )
         self.select_output_button.grid(
             row=3, column=2, sticky="ew", padx=(8, 0), pady=(0, 8)
@@ -1163,29 +1299,30 @@ class ConverterGui:
         actions = ttk.Frame(outer)
         actions.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(0, 8))
         actions.columnconfigure(2, weight=1)
-        self.start_button = ttk.Button(
+        self.start_button = RoundedButton(
             actions, text="Начать конвертацию", command=self._start,
-            style="Accent.TButton",
+            style="Accent", padding=(16, 8),
         )
         self.start_button.grid(row=0, column=0, padx=(0, 8))
-        self.stop_button = ttk.Button(
-            actions, text="Остановить", command=self._stop, state="disabled",
-            style="Danger.TButton",
+        self.stop_button = RoundedButton(
+            actions, text="Остановить", command=self._stop,
+            style="Danger", padding=(14, 8),
         )
+        self.stop_button.set_enabled(False)
         self.stop_button.grid(row=0, column=1)
-        self.open_folder_button = ttk.Button(
+        self.open_folder_button = RoundedButton(
             actions, text="Перейти в папку", command=self._open_output_folder,
-            style="Neutral.TButton",
+            style="Neutral", padding=(12, 6),
         )
         self.open_folder_button.grid(row=0, column=2, sticky="w", padx=(12, 0))
-        self.open_codes_button = ttk.Button(
+        self.open_codes_button = RoundedButton(
             actions, text="Открыть код", command=self._open_codes_dialog,
-            style="Info.TButton",
+            style="Info", padding=(12, 6),
         )
         self.open_codes_button.grid(row=0, column=3, sticky="w", padx=(12, 0))
-        self.excel_button = ttk.Button(
+        self.excel_button = RoundedButton(
             actions, text="Выгрузить Excel", command=self._export_excel,
-            style="Warn.TButton",
+            style="Warn", padding=(12, 6),
         )
         self.excel_button.grid(row=0, column=4, sticky="w", padx=(12, 0))
         ttk.Label(actions, textvariable=self.status_var).grid(
@@ -1236,14 +1373,14 @@ class ConverterGui:
         )
         self.dm_csv_entry = ttk.Entry(data_frame, textvariable=self.dm_csv_var)
         self.dm_csv_entry.grid(row=0, column=1, sticky="ew", pady=(0, 8))
-        self.dm_pick_files_btn = ttk.Button(
+        self.dm_pick_files_btn = RoundedButton(
             data_frame, text="Выбрать файлы", command=self._select_dm_csv,
-            style="Neutral.TButton"
+            style="Neutral", padding=(10, 5),
         )
         self.dm_pick_files_btn.grid(row=0, column=2, padx=(8, 0), pady=(0, 8))
-        self.dm_pick_folder_btn = ttk.Button(
+        self.dm_pick_folder_btn = RoundedButton(
             data_frame, text="Выбрать папку", command=self._select_dm_folder,
-            style="Neutral.TButton"
+            style="Neutral", padding=(10, 5),
         )
         self.dm_pick_folder_btn.grid(row=0, column=3, padx=(8, 0), pady=(0, 8))
 
@@ -1407,9 +1544,10 @@ class ConverterGui:
         self.dm_manual_code_entry.bind(
             "<Return>", lambda _e: self._manual_code_generate()
         )
-        ttk.Button(
+        RoundedButton(
             manual_row, text="Сгенерировать DataMatrix",
-            command=self._manual_code_generate, style="Accent.TButton"
+            command=self._manual_code_generate, style="Accent",
+            padding=(12, 6),
         ).grid(row=0, column=1)
 
         # ===== Блок 2: Вывод =====
@@ -1426,8 +1564,8 @@ class ConverterGui:
         )
         self.dm_pdf_entry = ttk.Entry(output_frame, textvariable=self.dm_pdf_var)
         self.dm_pdf_entry.grid(row=0, column=1, sticky="ew", pady=(0, 8))
-        ttk.Button(output_frame, text="Выбрать PDF", command=self._select_dm_pdf,
-                  style="Neutral.TButton").grid(
+        RoundedButton(output_frame, text="Выбрать PDF", command=self._select_dm_pdf,
+                  style="Neutral", padding=(10, 5)).grid(
             row=0, column=2, padx=(8, 0), pady=(0, 8)
         )
 
@@ -1473,47 +1611,47 @@ class ConverterGui:
         dm_actions = ttk.Frame(output_frame)
         dm_actions.grid(row=2, column=0, columnspan=5, sticky="ew", pady=(4, 8))
         dm_actions.columnconfigure(1, weight=1)
-        self.dm_generate_button = ttk.Button(
+        self.dm_generate_button = RoundedButton(
             dm_actions, text="Сгенерировать PDF", command=self._generate_dm_pdf,
-            style="Accent.TButton",
+            style="Accent", padding=(14, 6),
         )
         self.dm_generate_button.grid(row=0, column=0, padx=(0, 6), pady=2)
         self.dm_generate_tooltip = _make_tooltip(
             self.dm_generate_button, "Создать PDF с этикетками из выбранного CSV."
         )
-        self.dm_preview_button = ttk.Button(
+        self.dm_preview_button = RoundedButton(
             dm_actions, text="Предпросмотр", command=self._open_full_preview,
-            style="Info.TButton"
+            style="Info", padding=(12, 6),
         )
         self.dm_preview_button.grid(row=0, column=2, padx=(0, 6), pady=2)
-        self.dm_print_button = ttk.Button(
+        self.dm_print_button = RoundedButton(
             dm_actions, text="Печать", command=self._print_dm_pdf,
-            style="Warn.TButton"
+            style="Warn", padding=(12, 6),
         )
         self.dm_print_button.grid(row=0, column=3, padx=(0, 6), pady=2)
-        self.dm_exportpng_button = ttk.Button(
+        self.dm_exportpng_button = RoundedButton(
             dm_actions, text="Экспорт PNG", command=self._export_dm_png,
-            style="Warn.TButton"
+            style="Warn", padding=(12, 6),
         )
         self.dm_exportpng_button.grid(row=1, column=0, padx=(0, 6), pady=2)
-        self.dm_openpdf_button = ttk.Button(
+        self.dm_openpdf_button = RoundedButton(
             dm_actions, text="Открыть PDF", command=self._open_dm_pdf,
-            style="Neutral.TButton"
+            style="Neutral", padding=(12, 6),
         )
         self.dm_openpdf_button.grid(row=1, column=2, padx=(0, 6), pady=2)
-        self.dm_openfolder_button = ttk.Button(
+        self.dm_openfolder_button = RoundedButton(
             dm_actions, text="Открыть папку", command=self._open_dm_output_folder,
-            style="Neutral.TButton"
+            style="Neutral", padding=(12, 6),
         )
         self.dm_openfolder_button.grid(row=1, column=3, padx=(0, 6), pady=2)
-        self.dm_checkcodes_button = ttk.Button(
+        self.dm_checkcodes_button = RoundedButton(
             dm_actions, text="Проверить коды", command=self._check_dm_codes,
-            style="Info.TButton"
+            style="Info", padding=(12, 6),
         )
         self.dm_checkcodes_button.grid(row=1, column=4, padx=(0, 6), pady=2)
-        self.dm_batchreport_button = ttk.Button(
+        self.dm_batchreport_button = RoundedButton(
             dm_actions, text="Отчёт о партии", command=self._export_batch_report,
-            style="Neutral.TButton"
+            style="Neutral", padding=(12, 6),
         )
         self.dm_batchreport_button.grid(row=1, column=5, padx=(0, 6), pady=2)
 
@@ -1532,14 +1670,14 @@ class ConverterGui:
         )
         self.dm_profiles_combo.grid(row=0, column=1, sticky="ew", padx=(0, 8))
         self.dm_profiles_combo.bind("<<ComboboxSelected>>", self._apply_selected_profile)
-        self.dm_save_profile_button = ttk.Button(
+        self.dm_save_profile_button = RoundedButton(
             profile_row, text="Сохранить шаблон", command=self._save_profile_dialog,
-            style="Info.TButton"
+            style="Info", padding=(10, 5),
         )
         self.dm_save_profile_button.grid(row=0, column=2, padx=(0, 6))
-        self.dm_load_profile_button = ttk.Button(
+        self.dm_load_profile_button = RoundedButton(
             profile_row, text="Загрузить шаблон", command=self._load_profile_dialog,
-            style="Neutral.TButton"
+            style="Neutral", padding=(10, 5),
         )
         self.dm_load_profile_button.grid(row=0, column=3)
         self._refresh_profiles_combo()
@@ -1600,8 +1738,8 @@ class ConverterGui:
         self.quick_code_text.grid(row=1, column=0, sticky="ew", padx=(0, 6))
         self.quick_code_text.bind("<KeyRelease>", self._on_quick_code_change)
         self.quick_code_text.bind("<Control-Return>", self._quick_generate)
-        ttk.Button(qrow, text="Проверить", command=self._quick_generate,
-                   style="Accent.TButton").grid(
+        RoundedButton(qrow, text="Проверить", command=self._quick_generate,
+                   style="Accent", padding=(12, 6)).grid(
             row=2, column=0, sticky="w", padx=(0, 6), pady=(6, 0))
         # Enter запускает проверку/генерацию — так работают сканеры штрихкодов
         self.quick_code_text.bind("<Return>", self._quick_generate)
@@ -1626,17 +1764,17 @@ class ConverterGui:
             wraplength=620, justify="left",
         ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 6))
 
-        ttk.Button(
+        RoundedButton(
             tab7, text="Очистить список", command=self._scanner_clear,
-            style="Neutral.TButton",
+            style="Neutral", padding=(10, 5),
         ).grid(row=1, column=0, sticky="w", pady=(0, 6))
-        ttk.Button(
+        RoundedButton(
             tab7, text="Сохранить в CSV…", command=self._scanner_save_csv,
-            style="Accent.TButton",
+            style="Accent", padding=(10, 5),
         ).grid(row=1, column=1, sticky="w", pady=(0, 6), padx=(8, 0))
-        ttk.Button(
+        RoundedButton(
             tab7, text="Экспорт в Excel…", command=self._scanner_export_xlsx,
-            style="Info.TButton",
+            style="Info", padding=(10, 5),
         ).grid(row=1, column=2, sticky="w", pady=(0, 6), padx=(8, 0))
 
         self.scanner_log = scrolledtext.ScrolledText(
@@ -1693,9 +1831,9 @@ class ConverterGui:
             self.conv_file_entry.configure(validate="key")
         except Exception:
             pass
-        ttk.Button(
+        RoundedButton(
             conv_frame, text="Выбрать файл", command=self._conv_select_file,
-            style="Neutral.TButton",
+            style="Neutral", padding=(10, 5),
         ).grid(row=0, column=2, padx=(8, 0), pady=(0, 6))
 
         ttk.Label(conv_frame, text="Из формата:").grid(
@@ -1716,9 +1854,9 @@ class ConverterGui:
             values=tuple(self.conv_supported[self.conv_from_var.get()]),
         )
         self.conv_to_combo.grid(row=2, column=1, sticky="w", pady=(0, 6))
-        ttk.Button(
+        RoundedButton(
             conv_frame, text="Конвертировать", command=self._conv_convert,
-            style="Accent.TButton",
+            style="Accent", padding=(12, 6),
         ).grid(row=2, column=2, padx=(8, 0), pady=(0, 6))
 
         ttk.Label(
@@ -1727,9 +1865,9 @@ class ConverterGui:
                  "Файл можно перетащить мышью в поле «Файл».\n"
                  "Результат сохраняется рядом с исходным файлом.",
         ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        ttk.Button(
+        RoundedButton(
             conv_frame, text="Открыть папку", command=self._conv_open_folder,
-            style="Neutral.TButton",
+            style="Neutral", padding=(10, 5),
         ).grid(row=3, column=2, padx=(8, 0), pady=(6, 0))
 
         # --- Блок: пакетная конвертация папки (все файлы исходного формата) ---
@@ -1741,17 +1879,17 @@ class ConverterGui:
         ttk.Entry(conv_frame, textvariable=self.conv_folder_var,
                   state="readonly").grid(
             row=5, column=1, sticky="ew", pady=(0, 6))
-        ttk.Button(
+        RoundedButton(
             conv_frame, text="Выбрать папку", command=self._conv_select_folder,
-            style="Neutral.TButton",
+            style="Neutral", padding=(10, 5),
         ).grid(row=5, column=2, padx=(8, 0), pady=(0, 6))
         self.conv_folder_status = ttk.Label(
             conv_frame, text="", foreground="#666",
         )
         self.conv_folder_status.grid(row=6, column=0, columnspan=3, sticky="w")
-        ttk.Button(
+        RoundedButton(
             conv_frame, text="Конвертировать папку",
-            command=self._conv_folder_convert, style="Accent.TButton",
+            command=self._conv_folder_convert, style="Accent", padding=(12, 6),
         ).grid(row=7, column=1, sticky="w", pady=(6, 0))
         ttk.Label(
             conv_frame,
