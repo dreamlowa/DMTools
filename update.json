@@ -1,5 +1,5 @@
 {
-  "version": "1.8.52",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.52/DMTools.exe",
-  "notes": "Пакетная конвертация папки (все файлы формата разом), лог ошибок конвертации, drag-and-drop файла в конвертер, меню «Недавние файлы» — последние открытые файлы."
+  "version": "1.8.53",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.53/DMTools.exe",
+  "notes": "Инженерное обновление: рефакторинг (логика конвертера вынесена в converter_utils), 15 юнит-тестов, CI в GitHub Actions, обновлённая документация."
 }
