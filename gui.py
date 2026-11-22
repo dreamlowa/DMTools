@@ -331,6 +331,20 @@ class ConverterGui:
         self.conv_file_var = tk.StringVar()
         self.conv_from_var = tk.StringVar(value="PDF (.pdf)")
         self.conv_to_var = tk.StringVar(value="Word (.docx)")
+        # Реальные поддерживаемые конверсии: "Из формата" -> список "В формат".
+        # Пользователь не сможет выбрать неработающую пару — выпадающий список
+        # «В формат» перестраивается при выборе исходного формата.
+        self.conv_supported = {
+            "PDF (.pdf)": ["Word (.docx)", "TXT (.txt)", "Excel (.xlsx)"],
+            "Word (.docx)": ["PDF (.pdf)"],
+            "HTML (.html)": ["PDF (.pdf)", "Word (.docx)", "TXT (.txt)"],
+            "TXT (.txt)": ["PDF (.pdf)", "Word (.docx)", "HTML (.html)"],
+            "Markdown (.md)": ["HTML (.html)", "PDF (.pdf)", "Word (.docx)", "TXT (.txt)"],
+            "CSV (.csv)": ["Excel (.xlsx)", "Word (.docx)", "TXT (.txt)", "HTML (.html)", "PDF (.pdf)"],
+            "Excel (.xlsx)": ["CSV (.csv)", "Word (.docx)", "TXT (.txt)", "HTML (.html)", "PDF (.pdf)"],
+            "PNG (.png)": ["PNG (.png)", "JPG (.jpg)", "PDF (.pdf)"],
+            "JPG (.jpg)": ["PNG (.png)", "JPG (.jpg)", "PDF (.pdf)"],
+        }
         self._profiles: dict[str, dict] = {}
         self._last_generated_pdf: str | None = None
         self._last_generated_pages: int = 0
@@ -1720,19 +1734,17 @@ class ConverterGui:
         self.conv_from_combo = ttk.Combobox(
             conv_frame, textvariable=self.conv_from_var,
             state="readonly", width=22,
-            values=("PDF (.pdf)", "Word (.docx)", "HTML (.html)", "TXT (.txt)",
-                    "Markdown (.md)", "CSV (.csv)", "Excel (.xlsx)", "PNG (.png)",
-                    "JPG (.jpg)"),
+            values=tuple(self.conv_supported.keys()),
         )
         self.conv_from_combo.grid(row=1, column=1, sticky="w", pady=(0, 6))
+        self.conv_from_combo.bind("<<ComboboxSelected>>", self._conv_on_from_change)
 
         ttk.Label(conv_frame, text="В формат:").grid(
             row=2, column=0, sticky="e", padx=(0, 8), pady=(0, 6))
         self.conv_to_combo = ttk.Combobox(
             conv_frame, textvariable=self.conv_to_var,
             state="readonly", width=22,
-            values=("Word (.docx)", "PDF (.pdf)", "TXT (.txt)", "HTML (.html)",
-                    "Excel (.xlsx)", "CSV (.csv)", "PNG (.png)", "JPG (.jpg)"),
+            values=tuple(self.conv_supported[self.conv_from_var.get()]),
         )
         self.conv_to_combo.grid(row=2, column=1, sticky="w", pady=(0, 6))
         ttk.Button(
@@ -4252,6 +4264,22 @@ class ConverterGui:
         except OSError:
             messagebox.showerror("Открыть папку", f"Не удалось открыть папку:\n{folder}")
 
+    def _conv_on_from_change(self, _event=None) -> None:
+        """При смене исходного формата перестраивает список доступных целевых
+        форматов — только реально поддерживаемые пары (чтобы не предлагать
+        «не поддерживаются»)."""
+        try:
+            frm = self.conv_from_var.get()
+            targets = self.conv_supported.get(frm, [])
+            if not targets:
+                return
+            self.conv_to_combo.configure(values=tuple(targets))
+            # ставим первый доступный целевой формат, если текущий не подходит
+            if self.conv_to_var.get() not in targets:
+                self.conv_to_var.set(targets[0])
+        except Exception:
+            pass
+
     def _conv_convert(self) -> None:
         """Конвертирует выбранный файл из выбранного формата в указанный формат
         (как простой конвертер). Форматы выбираются пользователем в выпадающих списках."""
@@ -4288,6 +4316,14 @@ class ConverterGui:
 
         if to == frm_label:
             messagebox.showinfo("Конвертер", "Исходный и целевой формат совпадают.")
+            return
+
+        # проверяем, что выбранная пара реально поддерживается
+        if to not in self.conv_supported.get(frm_label, []):
+            messagebox.showwarning(
+                "Конвертер",
+                f"Конверсия «{frm_label} → {to}» пока не поддерживается.\n"
+                "Выберите доступный формат в выпадающем списке «В формат».")
             return
 
         # расширение результата по выбранному «в формат»
@@ -4511,6 +4547,83 @@ class ConverterGui:
             if not wb.sheetnames:
                 wb.create_sheet(title="Лист 1")
             wb.save(str(target))
+        elif frm in ("CSV", "Excel") and to in ("Word (.docx)", "TXT (.txt)", "HTML (.html)", "PDF (.pdf)"):
+            # CSV/Excel -> текстовые форматы: читаем ячейки и строим текст/документ
+            import csv as _csv
+            rows = []
+            if frm == "CSV":
+                with src_path.open("r", encoding="utf-8", errors="replace", newline="") as f:
+                    rows = [row for row in _csv.reader(f)]
+            else:
+                import openpyxl
+                wb = openpyxl.load_workbook(str(src_path), read_only=True)
+                ws = wb.active
+                rows = [list(r) for r in ws.iter_rows(values_only=True)]
+                wb.close()
+            text_lines = ["\t".join(("" if c is None else str(c)) for c in r) for r in rows]
+            if to == "TXT (.txt)":
+                target.write_text("\n".join(text_lines), encoding="utf-8")
+            elif to == "HTML (.html)":
+                import html as _h
+                body = "\n".join(
+                    "<tr>" + "".join(f"<td>{_h.escape('' if c is None else str(c))}</td>" for c in r) + "</tr>"
+                    for r in rows)
+                target.write_text(
+                    "<html><body><table>" + body + "</table></body></html>",
+                    encoding="utf-8")
+            elif to == "Word (.docx)":
+                from docx import Document as _D
+                doc = _D()
+                for r in rows:
+                    doc.add_paragraph("\t".join(("" if c is None else str(c)) for c in r))
+                doc.save(str(target))
+            else:  # PDF
+                out = fitz.open()
+                page = out.new_page()
+                y = 50
+                for line in text_lines:
+                    y = _pdf_wrap_text(page, line, 50, y, 11, 490, 18)
+                    if y > 790:
+                        page = out.new_page()
+                        y = 50
+                out.save(str(target))
+                out.close()
+        elif frm == "TXT" and to == "HTML (.html)":
+            import html as _h
+            text = src_path.read_text(encoding="utf-8", errors="replace")
+            paras = "".join(f"<p>{_h.escape(ln)}</p>" for ln in text.splitlines() if ln.strip())
+            target.write_text("<html><body>" + paras + "</body></html>", encoding="utf-8")
+        elif frm == "Markdown" and to in ("Word (.docx)", "TXT (.txt)"):
+            import re
+            raw = src_path.read_text(encoding="utf-8", errors="replace")
+            # грубо убираем markdown-разметку: заголовки, жирное, ссылки, списки
+            lines = []
+            for ln in raw.splitlines():
+                t = re.sub(r"^#{1,6}\s*", "", ln)          # заголовки
+                t = re.sub(r"\*\*([^*]+)\*\*", r"\1", t)    # жирное
+                t = re.sub(r"\*([^*]+)\*", r"\1", t)         # курсив
+                t = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", t)  # ссылки
+                t = re.sub(r"^[-*]\s+", "", t)               # маркированные списки
+                t = re.sub(r"^\d+\.\s+", "", t)              # нумерованные списки
+                t = re.sub(r"`([^`]+)`", r"\1", t)           # код
+                t = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", t)   # картинки
+                if t.strip():
+                    lines.append(t.strip())
+            if to == "TXT (.txt)":
+                target.write_text("\n".join(lines), encoding="utf-8")
+            else:
+                from docx import Document as _D
+                doc = _D()
+                for ln in lines:
+                    doc.add_paragraph(ln)
+                doc.save(str(target))
+        elif frm == "HTML" and to == "TXT (.txt)":
+            import re
+            import html as _h
+            html = src_path.read_text(encoding="utf-8", errors="replace")
+            text = re.sub(r"<[^>]+>", "", html)
+            text = _h.unescape(text)
+            target.write_text(text.strip() + "\n", encoding="utf-8")
         else:
             raise RuntimeError(f"Конверсия {frm} → {to} пока не поддерживается.")
 
