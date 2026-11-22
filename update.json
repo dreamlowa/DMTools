@@ -1,5 +1,5 @@
 {
-  "version": "1.8.57",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.57/DMTools.exe",
-  "notes": "Переключение тем больше не оставляет тёмных блоков (полный обход виджетов при смене темы)."
+  "version": "1.8.58",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.58/DMTools.exe",
+  "notes": "Закруглённые углы у всех цветных кнопок (класс RoundedButton), корректная перекраска при смене темы."
 }
