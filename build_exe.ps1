@@ -3,8 +3,6 @@
 $ProjectDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location -LiteralPath $ProjectDirectory
 
-# РќР°С…РѕРґРёРј Р±Р°Р·РѕРІС‹Р№ РёРЅС‚РµСЂРїСЂРµС‚Р°С‚РѕСЂ Python (Р±РµР· РєРѕС‚РѕСЂРѕРіРѕ РЅРµ СЃРѕР·РґР°С‚СЊ venv).
-# РџСЂРёРѕСЂРёС‚РµС‚: СЏРІРЅС‹Р№ СЃРёСЃС‚РµРјРЅС‹Р№ Python РІ РёР·РІРµСЃС‚РЅС‹С… РјРµСЃС‚Р°С…, Р·Р°С‚РµРј py.exe, Р·Р°С‚РµРј python.
 function Get-BasePythonCommand {
     $candidates = @(
         "C:\Python313\python.exe",
@@ -15,12 +13,11 @@ function Get-BasePythonCommand {
     foreach ($c in $candidates) {
         if (Test-Path -LiteralPath $c) { return ,@("&", $c) }
     }
-    # py.exe вЂ” Р»Р°СѓРЅС‡РµСЂ РІРµСЂСЃРёР№ Python, РЅР°РґС‘Р¶РЅРµРµ Р·Р°РіР»СѓС€РєРё python РёР· WindowsApps
     $py = Get-Command py.exe -ErrorAction SilentlyContinue
     if ($py) { return ,@("&", "py", "-3") }
     $python = Get-Command python.exe -ErrorAction SilentlyContinue
     if ($python) { return ,@("&", $python.Source) }
-    throw "РќРµ РЅР°Р№РґРµРЅ Python. РЈСЃС‚Р°РЅРѕРІРёС‚Рµ Python 3.10+ РёР»Рё СѓРєР°Р¶РёС‚Рµ РїСѓС‚СЊ РІ build_exe.ps1."
+    throw "Не найден Python. Установите Python 3.10+ или укажите путь в build_exe.ps1."
 }
 
 $Python = Join-Path $ProjectDirectory ".venv-build\Scripts\python.exe"
@@ -28,14 +25,14 @@ if (-not (Test-Path -LiteralPath $Python)) {
     $Base = Get-BasePythonCommand
     & $Base[1..($Base.Count - 1)] -m venv ".venv-build"
     if (-not (Test-Path -LiteralPath $Python)) {
-        throw "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ .venv-build"
+        throw "Не удалось создать .venv-build"
     }
 }
 
 & $Python -m pip install --upgrade pip
 & $Python -m pip install -r "requirements-build.txt"
 
-# РЎРЅР°С‡Р°Р»Р° СЃРѕР±РёСЂР°РµРј РІСЃРїРѕРјРѕРіР°С‚РµР»СЊРЅС‹Р№ РїСЂРѕС†РµСЃСЃ РѕР±РЅРѕРІР»РµРЅРёСЏ
+# Сначала собираем вспомогательный процесс обновления
 & $Python -m PyInstaller `
     --noconfirm `
     --clean `
@@ -45,25 +42,14 @@ if (-not (Test-Path -LiteralPath $Python)) {
     --name "updater_helper" `
     "updater_helper.py"
 
-# Р—Р°С‚РµРј СЃРѕР±РёСЂР°РµРј РѕСЃРЅРѕРІРЅРѕР№ EXE, РІРєР»СЋС‡Р°СЏ helper Рё zint РІРЅСѓС‚СЂСЊ
+# Затем основной EXE — собираем ЧЕРЕЗ SPEC (DMTools.spec), где корректно
+# включены данные tcl/tk (Python 3.14 хранит их как zip; их нужно распаковать
+# в папку tcltk/ и добавить как данные). CLI-сборка --add-data tkinter не
+# находит физическую папку tcl, что даёт ошибку "_tcl_data not found".
 & $Python -m PyInstaller `
     --noconfirm `
     --clean `
-    --onefile `
-    --windowed `
-    --noupx `
-    --name "DMTools" `
-    --collect-all "pymupdf" `
-    --collect-all "zxingcpp" `
-    --add-binary "zint.exe;." `
-    --add-binary "dist\updater_helper.exe;." `
-    --add-data "centrdelfin.ico;." `
-    --hidden-import "scanner" `
-    --hidden-import "scanner_devices" `
-    --hidden-import "scanner_diag" `
-    --version-file "version_info.txt" `
-    "main.py"
+    "DMTools.spec"
 
 Write-Host ""
 Write-Host "EXE created: $ProjectDirectory\dist\DMTools.exe"
-
