@@ -33,9 +33,9 @@ from converter_utils import (
     CONV_SUPPORTED,
     convert as convert_file,
     unique_target as conv_unique_target,
+    ext_from_src_label,
+    ext_from_dst_label,
 )
-
-
 
 
 def _safe_startfile(path: str) -> None:
@@ -258,17 +258,7 @@ class ConverterGui:
         # Реальные поддерживаемые конверсии: "Из формата" -> список "В формат".
         # Пользователь не сможет выбрать неработающую пару — выпадающий список
         # «В формат» перестраивается при выборе исходного формата.
-        self.conv_supported = {
-            "PDF (.pdf)": ["Word (.docx)", "TXT (.txt)", "Excel (.xlsx)"],
-            "Word (.docx)": ["PDF (.pdf)"],
-            "HTML (.html)": ["PDF (.pdf)", "Word (.docx)", "TXT (.txt)"],
-            "TXT (.txt)": ["PDF (.pdf)", "Word (.docx)", "HTML (.html)"],
-            "Markdown (.md)": ["HTML (.html)", "PDF (.pdf)", "Word (.docx)", "TXT (.txt)"],
-            "CSV (.csv)": ["Excel (.xlsx)", "Word (.docx)", "TXT (.txt)", "HTML (.html)", "PDF (.pdf)"],
-            "Excel (.xlsx)": ["CSV (.csv)", "Word (.docx)", "TXT (.txt)", "HTML (.html)", "PDF (.pdf)"],
-            "PNG (.png)": ["PNG (.png)", "JPG (.jpg)", "PDF (.pdf)"],
-            "JPG (.jpg)": ["PNG (.png)", "JPG (.jpg)", "PDF (.pdf)"],
-        }
+        self.conv_supported = CONV_SUPPORTED
         self._profiles: dict[str, dict] = {}
         self._last_generated_pdf: str | None = None
         self._last_generated_pages: int = 0
@@ -4307,11 +4297,7 @@ class ConverterGui:
         frm_label = self.conv_from_var.get()
         to = self.conv_to_var.get()
         # расширение исходного формата
-        src_ext = {
-            "PDF (.pdf)": ".pdf", "Word (.docx)": ".docx", "HTML (.html)": ".html",
-            "TXT (.txt)": ".txt", "Markdown (.md)": ".md", "CSV (.csv)": ".csv",
-            "Excel (.xlsx)": ".xlsx", "PNG (.png)": ".png", "JPG (.jpg)": ".jpg",
-        }.get(frm_label)
+        src_ext = ext_from_src_label(frm_label)
         if not src_ext:
             messagebox.showwarning("Конвертер", "Выберите исходный формат.")
             return
@@ -4323,54 +4309,79 @@ class ConverterGui:
                 "Конвертер",
                 f"Конверсия «{frm_label} → {to}» не поддерживается.")
             return
+        # защита от повторного запуска, пока предыдущая пакетная конвертация идёт
+        if getattr(self, "_conv_folder_running", False):
+            messagebox.showinfo("Конвертер", "Пакетная конвертация уже выполняется. Подождите.")
+            return
         files = sorted(
             p for p in Path(folder).iterdir()
             if p.is_file() and p.suffix.lower() == src_ext)
         if not files:
             messagebox.showinfo("Конвертер", f"В папке нет файлов формата {frm_label}.")
             return
-        # запускаем в фоне, чтобы не блокировать интерфейс
+        # запускаем в фоне, чтобы не блокировать интерфейс.
+        # Флаг ставим В MAIN-ПОТОКЕ до старта, иначе два быстрых нажатия
+        # создадут два потока (race-condition).
+        self._conv_folder_running = True
+        def _done():
+            self._conv_folder_running = False
         def work():
-            import datetime
-            ok_count = fail_count = 0
-            errors: list[tuple[str, str]] = []
-            for i, src in enumerate(files):
-                try:
-                    self._convert_impl(frm_label, to, src,
-                                       self._conv_unique_target(src, to))
-                    ok_count += 1
-                except Exception as exc:
-                    fail_count += 1
-                    errors.append((str(src), str(exc)))
-                if i % 5 == 0:
-                    self.root.after(0, lambda i=i, n=len(files):
-                                    self.conv_folder_status.configure(
-                                        text=f"Обработано {i}/{n}…"))
-            log_path = None
-            if errors:
-                # сохраняем лог ошибок рядом с папкой
-                try:
-                    log_path = Path(folder) / f"ошибки_конвертации_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-                    with open(log_path, "w", encoding="utf-8") as fh:
-                        fh.write(f"Лог ошибок пакетной конвертации\n")
-                        fh.write(f"Формат: {frm_label} → {to}\n")
-                        fh.write(f"Папка: {folder}\n")
-                        fh.write(f"Всего файлов: {len(files)}, ошибок: {fail_count}\n")
-                        fh.write("=" * 50 + "\n")
-                        for src, err in errors:
-                            fh.write(f"{src}\n  -> {err}\n")
-                except Exception:
-                    log_path = None
-            self.root.after(0, lambda: self.conv_folder_status.configure(
-                text=f"Готово: {ok_count} конвертировано, {fail_count} с ошибками."))
-            self.root.after(0, lambda: messagebox.showinfo(
-                "Конвертер",
-                (f"Пакетная конвертация завершена\n"
-                 f"Готово: {ok_count}\nОшибок: {fail_count}\n"
-                 + (f"Лог ошибок: {log_path}\n" if log_path else "")
-                 + f"Папка: {folder}")))
+            try:
+                self._work_folder(files, frm_label, to, folder, done=_done)
+            except Exception:
+                self.root.after(0, _done)
         import threading as _th
         _th.Thread(target=work, daemon=True).start()
+
+    def _work_folder(self, files: list, frm_label: str, to: str, folder: str,
+                     done=None) -> None:
+        """Фоновая часть пакетной конвертации папки (без потокового флага).
+
+        Вызывается из фонового потока; возвращается на извещение через
+        self.root.after, так как Tk должен обновляться только в main-потоке.
+        done — callable (без аргументов), вызываемый по завершении в main-потоке
+        через root.after, чтобы сбросить защитный флаг.
+        """
+        import datetime
+        ok_count = fail_count = 0
+        errors: list[tuple[str, str]] = []
+        for i, src in enumerate(files):
+            try:
+                self._convert_impl(frm_label, to, src,
+                                   self._conv_unique_target(src, to))
+                ok_count += 1
+            except Exception as exc:
+                fail_count += 1
+                errors.append((str(src), str(exc)))
+            if i % 5 == 0:
+                self.root.after(0, lambda i=i, n=len(files):
+                                self.conv_folder_status.configure(
+                                    text=f"Обработано {i}/{n}…"))
+        log_path = None
+        if errors:
+            # сохраняем лог ошибок рядом с папкой
+            try:
+                log_path = Path(folder) / f"ошибки_конвертации_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                with open(log_path, "w", encoding="utf-8") as fh:
+                    fh.write("Лог ошибок пакетной конвертации\n")
+                    fh.write(f"Формат: {frm_label} → {to}\n")
+                    fh.write(f"Папка: {folder}\n")
+                    fh.write(f"Всего файлов: {len(files)}, ошибок: {fail_count}\n")
+                    fh.write("=" * 50 + "\n")
+                    for src, err in errors:
+                        fh.write(f"{src}\n  -> {err}\n")
+            except Exception:
+                log_path = None
+        self.root.after(0, lambda: self.conv_folder_status.configure(
+            text=f"Готово: {ok_count} конвертировано, {fail_count} с ошибками."))
+        if done is not None:
+            self.root.after(0, done)
+        self.root.after(0, lambda: messagebox.showinfo(
+            "Конвертер",
+            (f"Пакетная конвертация завершена\n"
+             f"Готово: {ok_count}\nОшибок: {fail_count}\n"
+             + (f"Лог ошибок: {log_path}\n" if log_path else "")
+             + f"Папка: {folder}")))
 
     @staticmethod
     def _conv_unique_target(src: Path, to: str) -> Path:
@@ -4442,18 +4453,7 @@ class ConverterGui:
 
         # расширение исходного файла должно соответствовать выбранному формату
         src_ext = src_path.suffix.lower()
-        frm_map = {
-            "PDF (.pdf)": ".pdf",
-            "Word (.docx)": ".docx",
-            "HTML (.html)": ".html",
-            "TXT (.txt)": ".txt",
-            "Markdown (.md)": ".md",
-            "CSV (.csv)": ".csv",
-            "Excel (.xlsx)": ".xlsx",
-            "PNG (.png)": ".png",
-            "JPG (.jpg)": ".jpg",
-        }
-        expected_ext = frm_map.get(frm_label)
+        expected_ext = ext_from_src_label(frm_label)
         if expected_ext and src_ext != expected_ext and src_ext != ".doc" and src_ext != ".jpeg":
             messagebox.showwarning(
                 "Конвертер",
@@ -4474,29 +4474,10 @@ class ConverterGui:
                 "Выберите доступный формат в выпадающем списке «В формат».")
             return
 
-        # расширение результата по выбранному «в формат»
-        ext_map = {
-            "Word (.docx)": ".docx",
-            "PDF (.pdf)": ".pdf",
-            "TXT (.txt)": ".txt",
-            "HTML (.html)": ".html",
-            "Excel (.xlsx)": ".xlsx",
-            "CSV (.csv)": ".csv",
-            "PNG (.png)": ".png",
-            "JPG (.jpg)": ".jpg",
-        }
-        target_ext = ext_map.get(to, ".out")
-        target = src_path.with_suffix(target_ext)
-        # Если файл с таким именем уже существует — создаём копию с номером
-        # по порядку (имя_1.xlsx, имя_2.xlsx, ...), не перезаписывая и не
-        # блокируясь на уже открытом файле.
-        existing_target = target
-        n = 1
-        while target.exists():
-            target = existing_target.with_stem(f"{existing_target.stem}_{n}")
-            n += 1
+        # уникальное имя результата (с номером, если файл уже есть)
+        target = conv_unique_target(src_path, to)
         saved_label = target.name
-        if target != existing_target:
+        if target != src_path.with_suffix(ext_from_dst_label(to)):
             saved_label = f"{target.name} (файл уже был)"
         try:
             self._convert_impl(frm, to, src_path, target)
