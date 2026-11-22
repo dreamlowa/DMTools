@@ -1,5 +1,5 @@
 {
-  "version": "1.8.54",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.54/DMTools.exe",
-  "notes": "Исправления от команды агентов: устранена гонка при повторной пакетной конвертации, убрано дублирование мап расширений, добавлен AGENTS.md."
+  "version": "1.8.55",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.55/DMTools.exe",
+  "notes": "Исправлен запуск EXE на Python 3.14: библиотеки tcl/tk корректно упаковываются (ошибка «_tcl_data not found» устранена)."
 }
