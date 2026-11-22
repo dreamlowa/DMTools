@@ -1,5 +1,5 @@
 {
-  "version": "1.8.51",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.51/DMTools.exe",
-  "notes": "Конвертер: работают все 30 пар форматов, список «В формат» показывает только доступные варианты; добавлены CSV/Excel→Word/TXT/HTML/PDF, TXT→HTML, Markdown→Word/TXT, HTML→TXT."
+  "version": "1.8.52",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.52/DMTools.exe",
+  "notes": "Пакетная конвертация папки (все файлы формата разом), лог ошибок конвертации, drag-and-drop файла в конвертер, меню «Недавние файлы» — последние открытые файлы."
 }
