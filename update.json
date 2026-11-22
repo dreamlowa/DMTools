@@ -1,5 +1,5 @@
 {
-  "version": "1.8.53",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.53/DMTools.exe",
-  "notes": "Инженерное обновление: рефакторинг (логика конвертера вынесена в converter_utils), 15 юнит-тестов, CI в GitHub Actions, обновлённая документация."
+  "version": "1.8.54",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.54/DMTools.exe",
+  "notes": "Исправления от команды агентов: устранена гонка при повторной пакетной конвертации, убрано дублирование мап расширений, добавлен AGENTS.md."
 }
