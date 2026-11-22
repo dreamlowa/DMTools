@@ -958,6 +958,39 @@ class ConverterGui:
 
         for widget in self.root.winfo_children():
             self._refresh_style(widget)
+        # Дополнительно приводим «сырые» tk-виджеты (Canvas/Frame/Label/Text)
+        # к текущей теме — иначе после переключения темы туда-обратно остаются
+        # блоки от прошлой темы (например, тёмный превью-канвас на светлой теме).
+        self._refresh_tk_colors(self.root, bg, fg, field)
+
+    def _refresh_tk_colors(self, widget, bg: str, fg: str, field: str) -> None:
+        """Рекурсивно обновляет фон/текст у не-ttk виджетов под текущую тему.
+
+        У tk.Canvas/tk.Text/ttk.Entry-полей — светлый/тёмный фон поля (field),
+        у tk.Label/tk.Frame — фоновый bg. Пропускает ttk-виджеты (ими управляет
+        стиль) и виджеты со «служебными» цветами внутри диалогов.
+        """
+        try:
+            cls = widget.winfo_class()
+            if cls in ("Canvas", "Text"):
+                try:
+                    widget.configure(bg=field)
+                except tk.TclError:
+                    pass
+            elif cls in ("Frame", "Label") and not isinstance(widget, ttk.Frame):
+                try:
+                    widget.configure(bg=bg)
+                except tk.TclError:
+                    pass
+                try:
+                    if cls == "Label":
+                        widget.configure(fg=fg)
+                except tk.TclError:
+                    pass
+        except tk.TclError:
+            pass
+        for child in widget.winfo_children():
+            self._refresh_tk_colors(child, bg, fg, field)
 
     def _refresh_style(self, widget: tk.Misc) -> None:
         try:
