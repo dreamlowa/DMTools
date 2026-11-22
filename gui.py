@@ -815,15 +815,26 @@ class ConverterGui:
             bg = "#f0f0f0"
             fg = "#000000"
             field = "#ffffff"
+            # Используем clam и в светлой теме: vista отрисовывает кастомные
+            # стили кнопок (Accent/Info/Warn/Neutral) как нативные белые,
+            # игнорируя background/foreground → кнопки нечитаемые. В clam
+            # цвета работают надёжно в обеих темах.
             try:
-                style.theme_use("vista")
+                style.theme_use("clam")
             except tk.TclError:
                 pass
+            style.configure(".", background=bg, foreground=fg)
             style.configure("TFrame", background=bg)
             style.configure("Labelframe", background=bg, foreground=fg)
             style.configure("Labelframe.Label", background=bg, foreground=fg)
             style.configure("TLabel", background=bg, foreground=fg)
             style.configure("TCheckbutton", background=bg, foreground=fg)
+            style.configure(
+                "TButton", background="#ffffff", foreground="#000000",
+                bordercolor="#c0c0c0", focuscolor=bg, relief="flat",
+                lightcolor="#ffffff", darkcolor="#ffffff", padding=(8, 3),
+            )
+            style.map("TButton", background=[("active", "#e6e6e6"), ("pressed", "#d9d9d9")])
             style.configure("TEntry", fieldbackground=field, foreground=fg, insertcolor=fg)
             style.configure("TProgressbar", background="#2CA847", troughcolor=field)
             # акцентная (зелёная) кнопка главного действия
