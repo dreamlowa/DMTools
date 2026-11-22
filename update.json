@@ -1,5 +1,5 @@
 {
-  "version": "1.8.50",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.50/DMTools.exe",
-  "notes": "Конвертер: исправлена кириллица в Word→PDF и TXT→PDF (была «···»), добавлен перенос строк, полное декодирование HTML-сущностей в HTML→Word, чистые пробелы в PDF→Word/TXT."
+  "version": "1.8.51",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.51/DMTools.exe",
+  "notes": "Конвертер: работают все 30 пар форматов, список «В формат» показывает только доступные варианты; добавлены CSV/Excel→Word/TXT/HTML/PDF, TXT→HTML, Markdown→Word/TXT, HTML→TXT."
 }
