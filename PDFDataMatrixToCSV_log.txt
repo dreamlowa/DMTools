@@ -1,0 +1,8 @@
+[2026-11-22 20:24:34] Декодирован PDF: C:\Users\user\AppData\Local\Temp\tmprb8xytk7\Orders\first.pdf -> C:\Users\user\AppData\Local\Temp\tmprb8xytk7\Orders\first_decoded_codes.csv (кодов: 1, уникальных: 1)
+[2026-11-22 20:24:34] Декодирован PDF: C:\Users\user\AppData\Local\Temp\tmprb8xytk7\Orders\second.pdf -> C:\Users\user\AppData\Local\Temp\tmprb8xytk7\Orders\second_decoded_codes.csv (кодов: 1, уникальных: 1)
+[2026-11-22 20:25:37] Декодирован PDF: C:\Users\user\AppData\Local\Temp\tmpzeo0wkfb\Orders\first.pdf -> C:\Users\user\AppData\Local\Temp\tmpzeo0wkfb\Orders\first_decoded_codes.csv (кодов: 1, уникальных: 1)
+[2026-11-22 20:25:37] Декодирован PDF: C:\Users\user\AppData\Local\Temp\tmpzeo0wkfb\Orders\second.pdf -> C:\Users\user\AppData\Local\Temp\tmpzeo0wkfb\Orders\second_decoded_codes.csv (кодов: 1, уникальных: 1)
+[2026-11-22 20:26:09] Декодирован PDF: C:\Users\user\AppData\Local\Temp\tmpvko1nj9z\Orders\first.pdf -> C:\Users\user\AppData\Local\Temp\tmpvko1nj9z\Orders\first_decoded_codes.csv (кодов: 1, уникальных: 1)
+[2026-11-22 20:26:09] Декодирован PDF: C:\Users\user\AppData\Local\Temp\tmpvko1nj9z\Orders\second.pdf -> C:\Users\user\AppData\Local\Temp\tmpvko1nj9z\Orders\second_decoded_codes.csv (кодов: 1, уникальных: 1)
+[2026-11-22 20:29:38] Декодирован PDF: C:\Users\user\AppData\Local\Temp\tmp89h6o_7f\Orders\first.pdf -> C:\Users\user\AppData\Local\Temp\tmp89h6o_7f\Orders\first_decoded_codes.csv (кодов: 1, уникальных: 1)
+[2026-11-22 20:29:38] Декодирован PDF: C:\Users\user\AppData\Local\Temp\tmp89h6o_7f\Orders\second.pdf -> C:\Users\user\AppData\Local\Temp\tmp89h6o_7f\Orders\second_decoded_codes.csv (кодов: 1, уникальных: 1)

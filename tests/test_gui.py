@@ -118,12 +118,13 @@ class CombinedCsvTests(unittest.TestCase):
                 patch("gui.decode_pdf", side_effect=decode),
                 patch("gui.write_codes_csv") as write_csv,
             ):
-                app._run_batch(source, output, escape_csv=False)
+                app._run_batch(source, [first_pdf, second_pdf], output, "gs")
 
             write_csv.assert_called_once_with(
                 output,
                 [first_code, second_code],
                 escape_csv=False,
+                escape_mode="gs",
             )
 
     def test_declining_overwrite_does_not_start_processing(self) -> None:
@@ -135,10 +136,11 @@ class CombinedCsvTests(unittest.TestCase):
 
             app = ConverterGui.__new__(ConverterGui)
             app.running = False
+            app._multi_source_files = []
             app.source_var = Mock(get=Mock(return_value=str(source)))
             app.combined_output_var = Mock(get=Mock(return_value=str(output)))
             app.merge_csv_var = Mock(get=Mock(return_value=True))
-            app.escape_csv_var = Mock(get=Mock(return_value=False))
+            app.escape_mode_var = Mock(get=Mock(return_value="gs"))
 
             with (
                 patch("gui.messagebox.askyesno", return_value=False) as ask,
@@ -157,10 +159,11 @@ class CombinedCsvTests(unittest.TestCase):
 
             app = ConverterGui.__new__(ConverterGui)
             app.running = False
+            app._multi_source_files = []
             app.source_var = Mock(get=Mock(return_value=str(source)))
             app.combined_output_var = Mock(get=Mock(return_value=""))
             app.merge_csv_var = Mock(get=Mock(return_value=True))
-            app.escape_csv_var = Mock(get=Mock(return_value=False))
+            app.escape_mode_var = Mock(get=Mock(return_value="gs"))
 
             with (
                 patch("gui.messagebox.showerror") as show_error,
