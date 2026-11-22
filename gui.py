@@ -293,6 +293,7 @@ class ConverterGui:
         self.running = False
         self.last_output_dir: str | None = None
         self.last_dir: str | None = None
+        self.recent_files: list[str] = []  # последние открытые файлы (для меню)
         self._last_codes: list[MarkingCode] = []
         self._multi_source_files: list[Path] = []
         self.outer: ttk.Frame | None = None
@@ -390,6 +391,10 @@ class ConverterGui:
         file_menu.add_separator()
         file_menu.add_command(label="Экспорт настроек…", command=self._export_settings)
         file_menu.add_command(label="Импорт настроек…", command=self._import_settings)
+        file_menu.add_separator()
+        self.recent_menu = tk.Menu(file_menu, tearoff=0)
+        file_menu.add_cascade(label="Недавние файлы", menu=self.recent_menu)
+        self._refresh_recent_menu()
         file_menu.add_separator()
         file_menu.add_command(label="Выход", command=self._on_close)
         menubar.add_cascade(label="Файл", menu=file_menu)
@@ -1724,6 +1729,13 @@ class ConverterGui:
             row=0, column=0, sticky="e", padx=(0, 8), pady=(0, 6))
         self.conv_file_entry = ttk.Entry(conv_frame, textvariable=self.conv_file_var)
         self.conv_file_entry.grid(row=0, column=1, sticky="ew", pady=(0, 6))
+        # поддержка перетаскивания файла мышью (drag-and-drop) в поле конвертера
+        try:
+            self.conv_file_entry.drop_target_register("DND_Files")
+            self.conv_file_entry.dnd_bind("<<Drop>>", self._conv_on_drop)
+            self.conv_file_entry.configure(validate="key")
+        except Exception:
+            pass
         ttk.Button(
             conv_frame, text="Выбрать файл", command=self._conv_select_file,
             style="Neutral.TButton",
@@ -1755,12 +1767,41 @@ class ConverterGui:
         ttk.Label(
             conv_frame,
             text="Выберите исходный формат, целевой формат, файл и нажмите «Конвертировать».\n"
+                 "Файл можно перетащить мышью в поле «Файл».\n"
                  "Результат сохраняется рядом с исходным файлом.",
         ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
         ttk.Button(
             conv_frame, text="Открыть папку", command=self._conv_open_folder,
             style="Neutral.TButton",
         ).grid(row=3, column=2, padx=(8, 0), pady=(6, 0))
+
+        # --- Блок: пакетная конвертация папки (все файлы исходного формата) ---
+        ttk.Separator(conv_frame).grid(row=4, column=0, columnspan=3,
+                                       sticky="ew", pady=(8, 6))
+        self.conv_folder_var = tk.StringVar()
+        ttk.Label(conv_frame, text="Папка:").grid(
+            row=5, column=0, sticky="e", padx=(0, 8), pady=(0, 6))
+        ttk.Entry(conv_frame, textvariable=self.conv_folder_var,
+                  state="readonly").grid(
+            row=5, column=1, sticky="ew", pady=(0, 6))
+        ttk.Button(
+            conv_frame, text="Выбрать папку", command=self._conv_select_folder,
+            style="Neutral.TButton",
+        ).grid(row=5, column=2, padx=(8, 0), pady=(0, 6))
+        self.conv_folder_status = ttk.Label(
+            conv_frame, text="", foreground="#666",
+        )
+        self.conv_folder_status.grid(row=6, column=0, columnspan=3, sticky="w")
+        ttk.Button(
+            conv_frame, text="Конвертировать папку",
+            command=self._conv_folder_convert, style="Accent.TButton",
+        ).grid(row=7, column=1, sticky="w", pady=(6, 0))
+        ttk.Label(
+            conv_frame,
+            text="Все файлы выбранного исходного формата в этой папке будут\n"
+                 "конвертированы в целевой формат (результат — рядом с каждым файлом).",
+            foreground="#666",
+        ).grid(row=8, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
         # --- Вкладка Журнал: всегда добавляется ПОСЛЕДНЕЙ, чтобы она была
         #     самой правой в ленте независимо от количества вкладок. ---
@@ -4220,6 +4261,8 @@ class ConverterGui:
             paths = [Path(p) for p in selected]
             self._multi_source_files = paths
             self._remember_dir(str(paths[0].parent))
+            for p in paths:
+                self._add_recent_file(str(p))
             if len(paths) == 1:
                 path = paths[0]
                 self.source_var.set(str(path))
@@ -4247,10 +4290,180 @@ class ConverterGui:
             self.source_var.set(str(path))
             self.combined_output_var.set(str(default_combined_output_path(path)))
 
+    def _refresh_recent_menu(self) -> None:
+        """Перестраивает подменю «Недавние файлы» из self.recent_files."""
+        try:
+            menu = getattr(self, "recent_menu", None)
+            if menu is None:
+                return
+            menu.delete(0, "end")
+            files = [p for p in self.recent_files if p and Path(p).exists()]
+            if not files:
+                menu.add_command(label="(пусто)", state="disabled")
+                return
+            for p in files[:10]:
+                menu.add_command(
+                    label=p,
+                    command=lambda path=p: self._open_recent_file(path))
+            menu.add_separator()
+            menu.add_command(label="Очистить список", command=self._clear_recent_files)
+        except Exception:
+            pass
+
+    def _clear_recent_files(self) -> None:
+        self.recent_files = []
+        self._refresh_recent_menu()
+        self._save_config()
+
+    def _add_recent_file(self, path: str) -> None:
+        """Добавляет путь в начало списка недавних файлов (без дублей), макс. 15."""
+        try:
+            p = str(path)
+            if not p:
+                return
+            if p in self.recent_files:
+                self.recent_files.remove(p)
+            self.recent_files.insert(0, p)
+            del self.recent_files[15:]
+            self._refresh_recent_menu()
+        except Exception:
+            pass
+
+    def _open_recent_file(self, path: str) -> None:
+        """Открывает недавний файл: для MS Excel-результата — открывает файл,
+        для конвертера — подставляет в поле файла, для прочего — открывает."""
+        if not Path(path).exists():
+            messagebox.showwarning("Недавние файлы", f"Файл не найден:\n{path}\nУдалить его из списка?")
+            self.recent_files = [p for p in self.recent_files if p != path]
+            self._refresh_recent_menu()
+            return
+        suffix = Path(path).suffix.lower()
+        # файл конвертера — подставляем в поле «Файл» конвертера
+        if suffix in (".pdf", ".docx", ".doc", ".html", ".htm", ".txt", ".md", ".csv", ".xlsx", ".png", ".jpg", ".jpeg"):
+            cmd = {".pdf": "PDF (.pdf)", ".docx": "Word (.docx)", ".doc": "Word (.docx)",
+                   ".html": "HTML (.html)", ".htm": "HTML (.html)", ".txt": "TXT (.txt)",
+                   ".md": "Markdown (.md)", ".csv": "CSV (.csv)", ".xlsx": "Excel (.xlsx)",
+                   ".png": "PNG (.png)", ".jpg": "JPG (.jpg)", ".jpeg": "JPG (.jpg)"}
+            frm = cmd.get(suffix)
+            if frm and hasattr(self, "conv_file_var"):
+                self.conv_file_var.set(path)
+                self.conv_from_var.set(frm)
+                self._conv_on_from_change()
+                self._add_recent_file(path)
+                self._select_tab("Конвертер")
+                return
+        # иначе просто открываем файл системным обработчиком
+        try:
+            os.startfile(path)  # type: ignore[attr-defined]
+            self._add_recent_file(path)
+        except OSError as exc:
+            messagebox.showerror("Недавние файлы", f"Не удалось открыть файл:\n{exc}")
+
     def _conv_select_file(self) -> None:
         selected = filedialog.askopenfilename(title="Выберите файл для конвертации")
         if selected:
             self.conv_file_var.set(selected)
+            self._add_recent_file(selected)
+
+    def _conv_select_folder(self) -> None:
+        """Выбирает папку для пакетной конвертации."""
+        folder = filedialog.askdirectory(title="Выберите папку с файлами для конвертации")
+        if folder:
+            self.conv_folder_var.set(folder)
+            self._remember_dir(folder)
+            self.conv_folder_status.configure(
+                text=f"Папка: {folder}")
+
+    def _conv_folder_convert(self) -> None:
+        """Конвертирует все файлы выбранного исходного формата в папке
+        в целевой формат. Результат — рядом с каждым исходным файлом."""
+        folder = self.conv_folder_var.get().strip()
+        if not folder or not Path(folder).is_dir():
+            messagebox.showwarning("Конвертер", "Сначала выберите папку с файлами.")
+            return
+        frm_label = self.conv_from_var.get()
+        to = self.conv_to_var.get()
+        # расширение исходного формата
+        src_ext = {
+            "PDF (.pdf)": ".pdf", "Word (.docx)": ".docx", "HTML (.html)": ".html",
+            "TXT (.txt)": ".txt", "Markdown (.md)": ".md", "CSV (.csv)": ".csv",
+            "Excel (.xlsx)": ".xlsx", "PNG (.png)": ".png", "JPG (.jpg)": ".jpg",
+        }.get(frm_label)
+        if not src_ext:
+            messagebox.showwarning("Конвертер", "Выберите исходный формат.")
+            return
+        if frm_label == to:
+            messagebox.showinfo("Конвертер", "Исходный и целевой формат совпадают.")
+            return
+        if to not in self.conv_supported.get(frm_label, []):
+            messagebox.showwarning(
+                "Конвертер",
+                f"Конверсия «{frm_label} → {to}» не поддерживается.")
+            return
+        files = sorted(
+            p for p in Path(folder).iterdir()
+            if p.is_file() and p.suffix.lower() == src_ext)
+        if not files:
+            messagebox.showinfo("Конвертер", f"В папке нет файлов формата {frm_label}.")
+            return
+        # запускаем в фоне, чтобы не блокировать интерфейс
+        def work():
+            import datetime
+            ok_count = fail_count = 0
+            errors: list[tuple[str, str]] = []
+            for i, src in enumerate(files):
+                try:
+                    self._convert_impl(frm_label, to, src,
+                                       self._conv_unique_target(src, to))
+                    ok_count += 1
+                except Exception as exc:
+                    fail_count += 1
+                    errors.append((str(src), str(exc)))
+                if i % 5 == 0:
+                    self.root.after(0, lambda i=i, n=len(files):
+                                    self.conv_folder_status.configure(
+                                        text=f"Обработано {i}/{n}…"))
+            log_path = None
+            if errors:
+                # сохраняем лог ошибок рядом с папкой
+                try:
+                    log_path = Path(folder) / f"ошибки_конвертации_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                    with open(log_path, "w", encoding="utf-8") as fh:
+                        fh.write(f"Лог ошибок пакетной конвертации\n")
+                        fh.write(f"Формат: {frm_label} → {to}\n")
+                        fh.write(f"Папка: {folder}\n")
+                        fh.write(f"Всего файлов: {len(files)}, ошибок: {fail_count}\n")
+                        fh.write("=" * 50 + "\n")
+                        for src, err in errors:
+                            fh.write(f"{src}\n  -> {err}\n")
+                except Exception:
+                    log_path = None
+            self.root.after(0, lambda: self.conv_folder_status.configure(
+                text=f"Готово: {ok_count} конвертировано, {fail_count} с ошибками."))
+            self.root.after(0, lambda: messagebox.showinfo(
+                "Конвертер",
+                (f"Пакетная конвертация завершена\n"
+                 f"Готово: {ok_count}\nОшибок: {fail_count}\n"
+                 + (f"Лог ошибок: {log_path}\n" if log_path else "")
+                 + f"Папка: {folder}")))
+        import threading as _th
+        _th.Thread(target=work, daemon=True).start()
+
+    @staticmethod
+    def _conv_unique_target(src: Path, to: str) -> Path:
+        """Возвращает уникальное имя файла результата (с номером, если уже есть)."""
+        ext = {
+            "Word (.docx)": ".docx", "PDF (.pdf)": ".pdf", "TXT (.txt)": ".txt",
+            "HTML (.html)": ".html", "Excel (.xlsx)": ".xlsx", "CSV (.csv)": ".csv",
+            "PNG (.png)": ".png", "JPG (.jpg)": ".jpg",
+        }.get(to, ".out")
+        target = src.with_suffix(ext)
+        n = 1
+        base = target
+        while target.exists():
+            target = base.with_stem(f"{base.stem}_{n}")
+            n += 1
+        return target
 
     def _conv_open_folder(self) -> None:
         """Открывает папку, где лежит выбранный файл (рядом с ним сохраняется результат)."""
@@ -4277,6 +4490,29 @@ class ConverterGui:
             # ставим первый доступный целевой формат, если текущий не подходит
             if self.conv_to_var.get() not in targets:
                 self.conv_to_var.set(targets[0])
+        except Exception:
+            pass
+
+    def _conv_on_drop(self, event: object) -> None:
+        """Обрабатывает перетаскивание файла в поле конвертера: подставляет
+        путь в поле «Файл» и авто-подбирает исходный формат по расширению."""
+        raw = getattr(event, "data", None)
+        if not raw:
+            return
+        try:
+            paths = _split_drop_paths(str(raw))
+            cmd = {".pdf": "PDF (.pdf)", ".docx": "Word (.docx)", ".doc": "Word (.docx)",
+                   ".html": "HTML (.html)", ".htm": "HTML (.html)", ".txt": "TXT (.txt)",
+                   ".md": "Markdown (.md)", ".csv": "CSV (.csv)", ".xlsx": "Excel (.xlsx)",
+                   ".png": "PNG (.png)", ".jpg": "JPG (.jpg)", ".jpeg": "JPG (.jpg)"}
+            for p in paths:
+                ext = Path(p).suffix.lower()
+                if ext in cmd:
+                    self.conv_file_var.set(p)
+                    self.conv_from_var.set(cmd[ext])
+                    self._conv_on_from_change()
+                    self._add_recent_file(p)
+                    return
         except Exception:
             pass
 
@@ -5533,6 +5769,10 @@ class ConverterGui:
         saved_last_dir = data.get("last_output_dir")
         if isinstance(saved_last_dir, str) and saved_last_dir:
             self.last_output_dir = saved_last_dir
+        saved_recent = data.get("recent_files")
+        if isinstance(saved_recent, list):
+            self.recent_files = [p for p in saved_recent
+                                 if isinstance(p, str) and p]
         try:
             self.dark_var.set(bool(data.get("dark_mode", False)))
         except Exception:
@@ -5638,6 +5878,7 @@ class ConverterGui:
         data = {
             "last_output_dir": self.last_output_dir or "",
             "last_dir": self.last_dir or "",
+            "recent_files": list(self.recent_files),
             "dark_mode": bool(self.dark_var.get()),
             "escape_mode": self.escape_mode_var.get(),
             "merge_csv": bool(self.merge_csv_var.get()),
