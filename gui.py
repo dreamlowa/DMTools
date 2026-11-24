@@ -77,7 +77,7 @@ class RoundedButton(tk.Frame):
     """
 
     def __init__(self, master, text: str, command=None, style: str = "Accent",
-                 radius: int = 5, padding: tuple = (12, 6), width: int = 0):
+                 radius: int = 7, padding: tuple = (12, 6), width: int = 0):
         super().__init__(master)
         self.command = command
         self.style_name = style
@@ -127,11 +127,15 @@ class RoundedButton(tk.Frame):
             base = self._cfg["active"]
         h = 30
         r = self.radius
+        # 4 закруглённых угла + центральные прямоугольники, которые НЕ
+        # перекрывают угловые зоны — гарантирует равномерное скругление.
         c.create_oval(0, 0, r * 2, r * 2, fill=base, outline="")
         c.create_oval(w - r * 2, 0, w, r * 2, fill=base, outline="")
         c.create_oval(0, h - r * 2, r * 2, h, fill=base, outline="")
         c.create_oval(w - r * 2, h - r * 2, w, h, fill=base, outline="")
+        # полоса по центру по вертикали (без углов): x от r до w-r, вся высота
         c.create_rectangle(r, 0, w - r, h, fill=base, outline="")
+        # полоса по центру по горизонтали (без углов): вся ширина, y от r до h-r
         c.create_rectangle(0, r, w, h - r, fill=base, outline="")
         c.create_text(w / 2, h / 2, text=self._text, fill=self._cfg["fg"],
                       font=("Segoe UI", 9, "bold"))
