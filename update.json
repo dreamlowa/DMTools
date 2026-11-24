@@ -1,5 +1,5 @@
 {
-  "version": "1.8.58",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.58/DMTools.exe",
-  "notes": "Закруглённые углы у всех цветных кнопок (класс RoundedButton), корректная перекраска при смене темы."
+  "version": "1.8.59",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.59/DMTools.exe",
+  "notes": "Уменьшено скругление закруглённых кнопок вдвое (радиус 10 → 5) — умереннее."
 }
