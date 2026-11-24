@@ -77,7 +77,7 @@ class RoundedButton(tk.Frame):
     """
 
     def __init__(self, master, text: str, command=None, style: str = "Accent",
-                 radius: int = 10, padding: tuple = (12, 6), width: int = 0):
+                 radius: int = 5, padding: tuple = (12, 6), width: int = 0):
         super().__init__(master)
         self.command = command
         self.style_name = style
