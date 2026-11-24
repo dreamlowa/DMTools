@@ -1,5 +1,5 @@
 {
-  "version": "1.8.59",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.59/DMTools.exe",
-  "notes": "Уменьшено скругление закруглённых кнопок вдвое (радиус 10 → 5) — умереннее."
+  "version": "1.8.60",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.60/DMTools.exe",
+  "notes": "Кнопки: все 4 угла скруглены равномерно (исправлен нижний правый угол)."
 }
