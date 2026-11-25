@@ -1,5 +1,5 @@
 {
-  "version": "1.8.62",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.62/DMTools.exe",
-  "notes": "Точность чтения кодов: несколько DataMatrix на странице, мягкий режим (несчитанная страница не прерывает конвертацию)."
+  "version": "1.8.63",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.63/DMTools.exe",
+  "notes": "Сканер: логирование кодов и ошибок COM в журнал. Сборка EXE автоматически распаковывает tcl/tk (работает в CI)."
 }
