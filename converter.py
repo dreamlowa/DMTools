@@ -175,6 +175,18 @@ def decode_page(
 
         if len(gs1_results) == 1:
             return parse_honest_sign_code(gs1_results[0].bytes, page_number)
+        if len(gs1_results) > 1:
+            # несколько DataMatrix на странице: пробуем распарсить каждый и
+            # берём первый, прошедший валидацию структуры «Честного знака».
+            for result in gs1_results:
+                try:
+                    return parse_honest_sign_code(result.bytes, page_number)
+                except Exception:
+                    continue
+            attempts.append(
+                f"{dpi} DPI: {len(gs1_results)} GS1 DataMatrix, ни один не прошёл валидацию"
+            )
+            continue
 
         attempts.append(
             f"{dpi} DPI: valid barcodes={len(valid_results)}, "
@@ -360,7 +372,15 @@ def decode_pdf(
     log: LogCallback | None = None,
     page_progress: PageProgressCallback | None = None,
     cancel_event: threading.Event | None = None,
+    strict: bool = False,
 ) -> PdfDecodeResult:
+    """Дekодирует все GS1 DataMatrix в PDF.
+
+    При strict=False (по умолчанию) страницы, которые не удалось прочитать,
+    не прерывают всю конвертацию — они пропускаются, а об ошибках сообщается
+    через logger. При strict=True любая несчитанная страница прекращает
+    обработку (предыдущее поведение).
+    """
     pdf_path = pdf_path.resolve()
     logger = log or (lambda _message: None)
 
@@ -395,13 +415,16 @@ def decode_pdf(
                 raise
             except Exception as exc:
                 errors.append(f"page {page_number}: {exc}")
+                if strict:
+                    break
+                logger(f"Предупреждение — страница {page_number} не прочитана: {exc}\n")
 
             if page_progress is not None:
                 page_progress(page_number, page_count)
             if page_number % 25 == 0 or page_number == page_count:
                 logger(f"Processed: {page_number}/{page_count}\n")
 
-    if errors:
+    if errors and strict:
         details = "\n".join(f"  {error}" for error in errors)
         raise ConversionError(
             f"conversion aborted; no CSV was written.\n{details}"
@@ -426,6 +449,7 @@ def convert_pdf(
     page_progress: PageProgressCallback | None = None,
     cancel_event: threading.Event | None = None,
     escape_csv: bool = False,
+    strict: bool = False,
 ) -> ConversionResult:
     csv_path = csv_path.resolve()
     logger = log or (lambda _message: None)
@@ -435,6 +459,7 @@ def convert_pdf(
         log=logger,
         page_progress=page_progress,
         cancel_event=cancel_event,
+        strict=strict,
     )
 
     write_codes_csv(csv_path, list(decoded.codes), escape_csv=escape_csv)
