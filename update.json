@@ -1,5 +1,5 @@
 {
-  "version": "1.8.61",
-  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.61/DMTools.exe",
-  "notes": "Тесты ядра «Честного знака»: валидация GTIN, парсинг GS1-кодов, write_codes_csv. Всего 46 тестов зелёные."
+  "version": "1.8.62",
+  "url": "https://github.com/dreamlowa/DMTools/releases/download/v1.8.62/DMTools.exe",
+  "notes": "Точность чтения кодов: несколько DataMatrix на странице, мягкий режим (несчитанная страница не прерывает конвертацию)."
 }
