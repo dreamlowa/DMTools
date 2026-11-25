@@ -3106,11 +3106,15 @@ class ConverterGui:
 
     def _scanner_com_error(self, message: str) -> None:
         self.root.after(0, lambda: self.status_var.set(message))
+        self.root.after(0, lambda m=message: self._global_log(f"Сканер (COM): ошибка — {m}"))
 
     def _on_scanner_code(self, val: str) -> None:
         """Сканированный код: инкремент счётчика и перенос в Быстрый DataMatrix."""
         self._scanner_counter = getattr(self, "_scanner_counter", 0) + 1
         self._scanner_track_code(val)
+        n = self._scanner_counter
+        self.root.after(0, lambda n=n: self._global_log(
+            f"Сканер: код #{n} считан ({len(val)} симв.)"))
         self._set_quick_code(val)
         self._select_tab("Быстрый DataMatrix")
         self._quick_generate()

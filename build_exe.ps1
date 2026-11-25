@@ -32,6 +32,41 @@ if (-not (Test-Path -LiteralPath $Python)) {
 & $Python -m pip install --upgrade pip
 & $Python -m pip install -r "requirements-build.txt"
 
+# Python 3.14 хранит библиотеки tcl/tk как zip-архивы; для сборки нужна
+# распакованная папка tcltk/ (кладутся в spec как _tcl_data/_tk_data).
+# Если её нет — создаём автоматически из установленных архивов Python.
+if (-not (Test-Path -LiteralPath "tcltk")) {
+    Write-Host "Распаковываю tcl/tk в tcltk/ ..."
+    # Ищем zip-архивы tcl/tk в папках базовых Python (venv сам их не содержит).
+    $basePy = Get-BasePythonCommand
+    $baseExe = & $basePy[1..($basePy.Count-1)] -c "import sys; print(sys.executable)" 2>$null
+    $searchDirs = @("$PSScriptRoot\.venv-build") + @()
+    if ($baseExe) {
+        $searchDirs += (Split-Path $baseExe -Parent)
+        $searchDirs += (Join-Path (Split-Path $baseExe -Parent) "tcl")
+    }
+    $searchDirsStr = $searchDirs -join ";"
+    & $Python -c "import glob, zipfile, pathlib, sys
+import os
+paths = r'$searchDirsStr'.split(';')
+target = pathlib.Path('tcltk'); target.mkdir(exist_ok=True)
+found = False
+for d in paths:
+    if not os.path.isdir(d): continue
+    for z in sorted(glob.glob(os.path.join(d, 'libtcl*.zip')) + glob.glob(os.path.join(d, 'libtk*.zip'))):
+        try:
+            with zipfile.ZipFile(z) as zf: zf.extractall(target); found = True
+        except Exception as e:
+            print('  skip', z, e)
+if not found:
+    raise SystemExit('Не найдены zip tcl/tk среди: ' + paths)
+print('tcltk распакован из:', paths)
+"
+    if (-not (Test-Path -LiteralPath "tcltk\tcl_library")) {
+        throw "Не удалось распаковать tcl/tk. Проверьте установку Python 3.14."
+    }
+}
+
 # Сначала собираем вспомогательный процесс обновления
 & $Python -m PyInstaller `
     --noconfirm `
