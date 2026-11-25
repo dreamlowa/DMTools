@@ -6,6 +6,14 @@
 
 ---
 
+## [1.8.61] — 2026-11-26
+
+### Добавлено
+- Тесты ядра «Честного знака» (tests/test_converter.py): покрыты валидация GTIN,
+  парсинг/валидация GS1-кодов (parse_honest_sign_code, validate_codes),
+  parse_csv_codes, code_identification, gs1data_to_zint_data, write_codes_csv.
+  Всего 46 тестов зелёные.
+
 ## [1.8.60] — 2026-11-24
 
 ### Исправлено

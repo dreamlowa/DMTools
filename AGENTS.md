@@ -19,7 +19,7 @@
 | `version.py` / `version_info.txt` | Единый источник версии `APP_VERSION` |
 | `build_exe.ps1` | Сборка EXE (PyInstaller) |
 | `.github/workflows/ci.yml` | CI: автотесты на push, автосборка при теге |
-| `tests/` | Юнит-тесты (unittest): `test_gui.py`, `test_converter_utils.py` |
+| `tests/` | Юнит-тесты (unittest): `test_gui.py`, `test_converter_utils.py`, `test_converter.py` (ядро «Честного знака») |
 
 ## Локальные нормы (что принято в этом репозитории)
 
